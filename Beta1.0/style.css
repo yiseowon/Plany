@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Pretendard:wght@400;500;600;700&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Pretendard', sans-serif; height: 100vh; overflow: hidden; color: #333; background: #f8f9fa; }
+
+.screen { display: none; width: 100%; height: 100%; }
+.screen.active { display: flex; }
+button { cursor: pointer; border: none; font-family: inherit; transition: 0.2s; }
+.full-width { width: 100%; }
+
+/* [NEW] 태그 스타일 (선택된 여행지) */
+.tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    min-height: 40px; /* 비어있어도 공간 확보 */
+}
+.location-tag {
+    background: #e7f5ff;
+    color: #1971c2;
+    border: 1px solid #d0ebff;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.9em;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    animation: fadeIn 0.2s;
+}
+.location-tag i {
+    cursor: pointer;
+    color: #a5d8ff;
+}
+.location-tag i:hover {
+    color: #1971c2;
+}
+@keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+
+/* 숫자 폰트 */
+.modern-time-picker input, .place-marker-icon, .weather-desc, #total-cost, .place-meta, .place-time-badge { font-family: 'Poppins', sans-serif !important; letter-spacing: 0.5px; }
+
+/* 버튼 스타일 */
+.btn-primary { background: linear-gradient(135deg, #4dabf7 0%, #339af0 100%); color: white; padding: 12px 20px; border-radius: 12px; font-weight: 600; box-shadow: 0 4px 6px rgba(51, 154, 240, 0.3); }
+.btn-primary:hover { transform: translateY(-2px); }
+.btn-secondary { background: #fff; color: #495057; border: 1px solid #dee2e6; padding: 8px 15px; border-radius: 8px; font-weight: 600; }
+.btn-secondary:hover { background: #f8f9fa; }
+.btn-success { background: #40c057; color: white; padding: 12px; border-radius: 12px; font-weight: 600; }
+.btn-icon { background: none; font-size: 1.1rem; color: #868e96; padding: 5px; border-radius: 50%; }
+.btn-icon:hover { background: #f1f3f5; color: #333; }
+
+/* 1. 로그인 */
+#login-screen { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); justify-content: center; align-items: center; }
+.center-box { background: white; padding: 50px; border-radius: 24px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.btn-google { background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 50px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 20px; }
+
+/* 2. 대시보드 */
+#dashboard-screen { flex-direction: column; padding: 20px; overflow-y: auto; }
+.dashboard-container { max-width: 900px; margin: 0 auto; width: 100%; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+.user-info { display: flex; align-items: center; gap: 10px; background: white; padding: 5px 15px 5px 5px; border-radius: 50px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+.user-avatar-small { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 2px solid #e9ecef; }
+.trip-card { background: white; padding: 25px; border-radius: 20px; margin-bottom: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); cursor: pointer; transition: all 0.2s; display: flex; justify-content: space-between; align-items: center; border: 1px solid transparent; position: relative; }
+.trip-card:hover { transform: translateY(-3px); border-color: #a5d8ff; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+.trip-info h3 { margin: 0 0 6px 0; font-size: 1.2rem; }
+.trip-actions { display: flex; gap: 8px; }
+.btn-setting { background: #f1f3f5; color: #868e96; border-radius: 10px; width: 40px; height: 40px; display: flex; justify-content: center; align-items: center; transition: 0.2s; cursor: pointer; border: none; }
+.btn-setting:hover { background: #e9ecef; color: #333; }
+.floating-btn { position: fixed; bottom: 40px; right: 40px; padding: 15px 25px; border-radius: 50px; font-size: 1.1em; display: flex; align-items: center; gap: 8px; z-index: 100; background: #4dabf7; color: white; font-weight: bold; box-shadow: 0 5px 15px rgba(77, 171, 247, 0.4); }
+
+/* 3. 플래너 */
+#planner-screen { flex-direction: row; }
+.sidebar { width: 420px; background: white; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; z-index: 10; }
+.sidebar-header { padding: 20px; border-bottom: 1px solid #f1f3f5; display: flex; align-items: center; gap: 15px; }
+.map-container { flex: 1; }
+#map { width: 100%; height: 100%; }
+
+/* 메뉴 및 탭 */
+.menu-tabs { display: flex; padding: 0 15px; border-bottom: 1px solid #f1f3f5; }
+.tab-btn { flex: 1; padding: 15px; background: white; color: #adb5bd; font-weight: 600; border-bottom: 2px solid transparent; }
+.tab-btn.active { color: #4dabf7; border-bottom: 2px solid #4dabf7; }
+.tab-content { display: none; flex: 1; overflow-y: auto; padding: 20px; }
+.tab-content.active { display: block; }
+
+/* 장소 리스트 */
+.day-scroll { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 15px; scrollbar-width: none; }
+.day-btn { padding: 8px 18px; border-radius: 20px; background: #f1f3f5; white-space: nowrap; font-size: 0.9em; font-weight: 600; color: #495057; }
+.day-btn.active { background: #4dabf7; color: white; }
+
+.place-card { background: white; border: 1px solid #f1f3f5; padding: 18px; border-radius: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); transition: transform 0.1s, box-shadow 0.2s; cursor: grab; position: relative; }
+.place-card:active { cursor: grabbing; transform: scale(0.99); }
+.place-card:hover { box-shadow: 0 5px 15px rgba(0,0,0,0.08); border-color: #a5d8ff; }
+.sortable-ghost { opacity: 0.4; background: #e7f5ff; border: 2px dashed #339af0; }
+
+.place-marker-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: 800; flex-shrink: 0; font-size: 15px; }
+.place-marker-icon.restaurant { background: #ff6b6b; box-shadow: 0 4px 10px rgba(255,107,107,0.3); }
+.place-marker-icon.attraction { background: #4dabf7; box-shadow: 0 4px 10px rgba(77,171,247,0.3); }
+
+.place-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.place-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.place-title { font-weight: 700; font-size: 1.1em; color: #343a40; line-height: 1.2; word-break: break-all; margin: 0; }
+.place-right-group { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.place-time-badge { background: #e7f5ff; color: #1971c2; border: 1px solid #d0ebff; padding: 6px 10px; border-radius: 8px; font-size: 0.9em; font-weight: 700; white-space: nowrap; }
+.place-actions { display: flex; gap: 6px; }
+.btn-action-large { width: 36px; height: 36px; border-radius: 8px; border: none; display: flex; justify-content: center; align-items: center; background: #f1f3f5; color: #868e96; font-size: 1.1rem; transition: 0.2s; cursor: pointer; }
+.btn-action-large:hover { background: #e9ecef; color: #333; transform: scale(1.05); }
+.btn-action-large.delete:hover { background: #ffe3e3; color: #fa5252; }
+.place-meta { font-size: 0.9em; color: #868e96; background: #f8f9fa; padding: 6px 10px; border-radius: 6px; margin-top: 4px; display: none; }
+.place-meta.has-content { display: block; }
+
+/* 기타 */
+.search-box { position: relative; margin-bottom: 15px; }
+.search-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #adb5bd; }
+.modern-input { width: 100%; padding: 14px 14px 14px 45px; border: 1px solid #e9ecef; border-radius: 14px; font-size: 0.95em; background: #f8f9fa; transition: 0.2s; }
+.modern-input:focus { outline: none; border-color: #4dabf7; background: white; box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.1); }
+.quick-actions { display: flex; gap: 8px; margin-bottom: 20px; }
+.action-btn { flex: 1; padding: 10px; border-radius: 12px; background: white; border: 1px solid #e9ecef; color: #495057; font-weight: 600; font-size: 0.85em; display: flex; align-items: center; justify-content: center; gap: 6px; transition: 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.action-btn:hover { background: #f8f9fa; border-color: #adb5bd; transform: translateY(-1px); }
+.search-results { position: absolute; top: 110%; width: 100%; background: white; border-radius: 16px; max-height: 250px; overflow-y: auto; z-index: 100; box-shadow: 0 10px 40px rgba(0,0,0,0.15); display: none; border: 1px solid #f1f3f5; }
+.search-results.active { display: block; }
+.result-item { padding: 14px 18px; border-bottom: 1px solid #f8f9fa; cursor: pointer; transition: 0.1s; }
+.result-item:hover { background: #f1f3f5; }
+.rec-item { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 12px; padding: 15px; cursor: pointer; transition: 0.2s; margin-bottom: 10px; }
+.rec-item:hover { background: #e7f5ff; border-color: #4dabf7; transform: translateY(-2px); }
+
+.invite-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 16px; color: white; margin-top: 20px; text-align: center; }
+.invite-text h4 { margin-bottom: 5px; }
+.invite-text p { font-size: 0.9em; opacity: 0.9; margin-bottom: 15px; }
+.invite-action { display: flex; background: rgba(255,255,255,0.2); padding: 5px; border-radius: 10px; }
+.invite-action input { flex: 1; background: transparent; border: none; color: white; padding: 8px; outline: none; }
+.invite-action button { background: white; color: #667eea; border: none; border-radius: 8px; width: 36px; height: 36px; display: flex; justify-content: center; align-items: center; }
+.member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 15px; padding: 10px 0; }
+.member-item { text-align: center; }
+.member-avatar { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 5px; }
+.member-name { font-size: 0.85em; font-weight: 600; color: #495057; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weather-widget { background: linear-gradient(135deg, #e7f5ff 0%, #d0ebff 100%); padding: 15px 20px; margin: 15px; border-radius: 16px; color: #1864ab; display: flex; align-items: center; gap: 15px; }
+.weather-icon img { width: 48px; }
+
+/* 팝업/모달 */
+#common-modal .modal-content { border-radius: 24px; padding: 30px; animation: popUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+#common-modal-icon { display: inline-block; animation: bounce 0.5s; }
+@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 2000; justify-content: center; align-items: center; backdrop-filter: blur(5px); }
+.modal.active { display: flex; }
+.modal-content { background: white; padding: 32px; border-radius: 28px; width: 90%; max-width: 440px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); position: relative; animation: popUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.close-modal { position: absolute; top: 20px; right: 24px; font-size: 24px; cursor: pointer; color: #ced4da; transition: 0.2s; }
+.close-modal:hover { color: #333; }
+.form-group { margin-bottom: 20px; }
+.form-group label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 0.9em; color: #495057; }
+.form-input { width: 100%; padding: 14px; border: 2px solid #f1f3f5; border-radius: 12px; font-size: 1rem; transition: 0.2s; background: #f8f9fa; }
+.form-input:focus { border-color: #4dabf7; background: white; outline: none; }
+.date-row { display: flex; gap: 10px; align-items: center; }
+.modern-time-picker input { font-size: 3rem; padding: 20px; border: none; background: #f1f3f5; border-radius: 20px; color: #4dabf7; font-weight: 800; width: 100%; text-align: center; outline: none; margin: 20px 0; font-variant-numeric: tabular-nums; }
+.profile-upload { width: 100px; height: 100px; margin: 0 auto 20px; position: relative; }
+#profile-preview { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 4px solid #f8f9fa; box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
+.camera-btn { position: absolute; bottom: 0; right: 0; background: #339af0; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; border: 3px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.route-info-marker { background: white; border: 2px solid #4dabf7; color: #4dabf7; padding: 8px 16px; border-radius: 30px; font-weight: 800; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); cursor: pointer; pointer-events: auto; transition: 0.2s; }
+.route-info-marker:hover { transform: scale(1.1); background: #4dabf7; color: white; }
+.transport-card { border: 1px solid #e9ecef; border-radius: 12px; margin-bottom: 15px; overflow: hidden; }
+.transport-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; font-weight: 700; border-bottom: 1px solid #e9ecef; }
+.transport-steps { padding: 20px; font-size: 13px; line-height: 1.6; }
+
+@keyframes popUp { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
