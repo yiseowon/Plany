@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Travel Mate 3.1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+</head>
+<body>
+
+
+    <div id="login-screen" class="screen active">
+        <div class="center-box">
+            <h1>Plany</h1>
+            <p>친구와 함께 만드는 스마트한 여행</p>
+            <button id="google-login-btn" class="btn-google">
+                <i class="fab fa-google"></i> Google 계정으로 시작
+            </button>
+        </div>
+    </div>
+
+
+    <div id="dashboard-screen" class="screen">
+        <div class="dashboard-container">
+            <header>
+                <h2>내 여행 목록</h2>
+                <div class="user-info" id="dashboard-profile-area">
+                    <span style="font-size:0.9em; color:#adb5bd;">로딩중...</span>
+                </div>
+            </header>
+            <div class="trip-list" id="trip-list"></div>
+            <button id="create-new-trip-btn" class="floating-btn">
+                <i class="fas fa-plus"></i> 새 여행
+            </button>
+        </div>
+    </div>
+
+
+    <div id="planner-screen" class="screen">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button id="back-to-dashboard" class="btn-icon"><i class="fas fa-arrow-left"></i></button>
+                <h2 id="planner-title">여행 제목</h2>
+            </div>
+            
+            <div id="weather-widget" class="weather-widget">
+                <div class="weather-icon"><i class="fas fa-cloud-sun"></i></div>
+                <div class="weather-info">날씨 정보를 불러오는 중...</div>
+            </div>
+
+
+            <div class="menu-tabs">
+                <button class="tab-btn active" onclick="switchTab('plan')">일정</button>
+                <button class="tab-btn" onclick="switchTab('budget')">가계부</button>
+                <button class="tab-btn" onclick="switchTab('social')">멤버</button>
+            </div>
+
+
+            <div id="tab-plan" class="tab-content active">
+                <div class="day-scroll" id="day-tabs"></div>
+                <div class="search-box">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="place-search" class="modern-input" placeholder="장소 검색 (맛집, 호텔)...">
+                    <div id="search-results" class="search-results">
+                        <div style="position: sticky; top: 0; background: white; padding: 10px; border-bottom: 1px solid #f1f3f5; display: none; justify-content: space-between; align-items: center;" id="search-results-header">
+                            <span style="font-weight: 600; color: #868e96; font-size: 0.9em;">검색 결과</span>
+                            <button onclick="closeSearchResults()" style="background: none; border: none; cursor: pointer; color: #868e96; font-size: 1.2em;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div id="search-results-list"></div>
+                    </div>
+                </div>
+                <div class="quick-actions">
+                    <button id="my-location-btn" class="action-btn"><i class="fas fa-location-arrow"></i> 내 위치</button>
+                    <button id="optimize-route" class="action-btn"><i class="fas fa-route"></i> 동선 정렬</button>
+                    <button id="recommend-places" class="action-btn"><i class="fas fa-map-marker-alt"></i> 주변 추천</button>
+                </div>
+                <div class="places-list" id="places-list"></div>
+            </div>
+
+
+
+            <div id="tab-budget" class="tab-content">
+                <div class="budget-summary" style="padding:20px; background:#f8f9fa; border-radius:16px; margin-bottom:20px; text-align:center;">
+                    <h3 style="color:#868e96; font-size:0.9em; margin-bottom:5px;">총 예상 비용</h3>
+                    <p id="total-cost" style="font-size:1.5em; font-weight:800; color:#333;">0 원</p>
+                </div>
+                <div id="budget-list"></div>
+            </div>
+
+
+            <div id="tab-social" class="tab-content">
+                <h3>여행 멤버</h3>
+                <div id="member-list" class="member-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; padding:15px 0;"></div>
+                <div class="invite-card" style="background:#4dabf7; color:white; padding:20px; border-radius:16px; margin-top:20px; text-align:center;">
+                    <h4>💌 친구 초대하기</h4>
+                    <p style="opacity:0.9; margin:10px 0; font-size:0.9em;">링크를 복사해서 공유하세요.</p>
+                    <div style="background:rgba(255,255,255,0.2); padding:8px; border-radius:10px; display:flex; align-items:center;">
+                        <input type="text" id="invite-link" readonly style="background:transparent; border:none; color:white; flex:1; outline:none; padding:0 10px;">
+                        <button id="copy-link-btn" style="background:white; color:#4dabf7; border-radius:8px; width:36px; height:36px; display:flex; justify-content:center; align-items:center;"><i class="far fa-copy"></i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="map-container"><div id="map"></div></div>
+    </div>
+
+
+    <div id="setup-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('setup-modal')">&times;</span>
+            <h2>새 여행 만들기</h2>
+            <form id="trip-form">
+                <div class="form-group">
+                    <label>여행 제목</label>
+                    <input type="text" id="trip-title-input" class="form-input" placeholder="예: 오사카 먹방 투어" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>여행지 선택 (복수 선택 가능)</label>
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <select id="select-country" class="form-input" style="flex:1;">
+                            <option value="">국가 선택</option>
+                            </select>
+                        <select id="select-region" class="form-input" style="flex:1;" disabled>
+                            <option value="">지역 선택</option>
+                        </select>
+                        <button type="button" id="btn-add-region" class="btn-secondary" style="width: auto; padding: 0 15px;">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <div id="selected-regions-container" class="tags-container"></div>
+                </div>
+
+
+                <div class="form-group">
+                    <label>기간</label>
+                    <div class="date-row">
+                        <input type="date" id="start-date" class="form-input" required>
+                        <input type="date" id="end-date" class="form-input" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary full-width">생성하기</button>
+            </form>
+        </div>
+    </div>
+
+
+    <div id="trip-settings-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('trip-settings-modal')">&times;</span>
+            <h2>여행 설정</h2>
+            <form id="trip-settings-form">
+                <input type="hidden" id="setting-trip-id">
+                <div class="form-group"><label>여행 제목</label><input type="text" id="setting-title" class="form-input" required></div>
+                <div class="form-group"><label>기간</label><div class="date-row"><input type="date" id="setting-start-date" class="form-input" required><input type="date" id="setting-end-date" class="form-input" required></div></div>
+                <p style="color:#fa5252; font-size:0.85em; margin-bottom:15px;">※ 기간을 줄이면 해당 일자의 일정이 삭제될 수 있습니다.</p>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" id="btn-delete-trip" class="btn-secondary full-width" style="background:#ffc9c9; color:#fa5252; border:none;">삭제</button>
+                    <button type="submit" class="btn-primary full-width">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <div id="profile-modal" class="modal">
+        <div class="modal-content profile-content" style="text-align:center;">
+            <h2>프로필 설정</h2>
+            <div class="profile-upload">
+                <img id="profile-preview" src="https://via.placeholder.com/100" alt="Profile">
+                <label for="profile-file-input" class="camera-btn"><i class="fas fa-camera"></i></label>
+                <input type="file" id="profile-file-input" accept="image/*" style="display:none">
+            </div>
+            <div class="form-group"><input type="text" id="profile-nickname" class="form-input" placeholder="닉네임" style="text-align:center;"></div>
+            <button id="save-profile-btn" class="btn-primary">시작하기</button>
+        </div>
+    </div>
+
+
+    <div id="time-selection-modal" class="modal">
+        <div class="modal-content" style="text-align:center;">
+            <span class="close-modal" onclick="closeModal('time-selection-modal')">&times;</span>
+            <h3 id="selected-place-name" style="margin-bottom:5px;">장소 이름</h3>
+            <p style="color:#868e96; font-size:0.9em;">언제 방문하실 예정인가요?</p>
+            <div class="modern-time-picker"><input type="time" id="new-place-time" required></div>
+            <button id="confirm-add-place-btn" class="btn-primary">추가하기</button>
+        </div>
+    </div>
+
+
+    <div id="place-edit-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('place-edit-modal')">&times;</span>
+            <h3>정보 수정</h3>
+            <div class="form-group"><label>이름</label><input type="text" id="edit-place-name" class="form-input"></div>
+            <div class="form-group"><label>방문 시간</label><input type="time" id="edit-place-time" class="form-input"></div>
+            <div class="form-group"><label>메모</label><textarea id="edit-place-memo" class="form-input" rows="2"></textarea></div>
+            <div class="form-group"><label>비용 (원)</label><input type="number" id="edit-place-cost" class="form-input"></div>
+            <button id="save-place-btn" class="btn-primary">저장</button>
+        </div>
+    </div>
+
+
+    <div id="route-detail-modal" class="modal">
+        <div class="modal-content route-content">
+            <span class="close-modal" onclick="closeModal('route-detail-modal')">&times;</span>
+            <h3>🚗 이동 정보</h3>
+            <div id="route-comparison" style="margin-top:20px;"></div>
+            <button id="book-ticket-btn" class="btn-success full-width" style="margin-top:15px;">관련 사이트 이동</button>
+        </div>
+    </div>
+
+
+    <div id="recommendation-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('recommendation-modal')">&times;</span>
+            <h3>🌟 주변 명소 추천</h3>
+            <p style="color:#868e96; font-size:0.9em; margin-bottom:15px;">지도 중심 반경 2km 내 인기 장소입니다.</p>
+            <div id="recommendation-list" style="max-height: 400px; overflow-y: auto; display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+    </div>
+
+
+    <div id="common-modal" class="modal" style="z-index: 3000;">
+        <div class="modal-content" style="text-align: center; max-width: 350px;">
+            <div id="common-modal-icon" style="font-size: 3rem; margin-bottom: 15px;"></div>
+            <h3 id="common-modal-title" style="margin-bottom: 10px;">알림</h3>
+            <p id="common-modal-msg" style="color: #666; margin-bottom: 25px; line-height: 1.5;"></p>
+            <div id="common-modal-actions" style="display: flex; gap: 10px; justify-content: center;"></div>
+        </div>
+    </div>
+
+
+    <script src="config.js"></script>
+    <script>
+        (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+            key: CONFIG.GOOGLE_API_KEY,
+            v: "weekly",
+        });
+    </script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
