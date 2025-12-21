@@ -1,8 +1,3 @@
-// app.js - Travel Mate Final Full Version
-
-// ==========================================
-// 1. 라이브러리 임포트 (Firebase)
-// ==========================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { 
     getAuth, 
@@ -24,40 +19,37 @@ import {
     onSnapshot, 
     query, 
     where, 
-    arrayUnion 
+    arrayUnion,
+    arrayRemove 
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-// ==========================================
-// 2. 초기화 및 전역 변수
-// ==========================================
-// CONFIG는 config.js에서 로드됨
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
-// 지도 및 서비스 객체
 let map;
 let directionsService;
 let Place, AdvancedMarkerElement, PinElement, Geometry;
 
-// 현재 세션 데이터
 let currentUser = null;
 let currentTripId = null;
 let currentTripData = null;
 let currentDayIndex = 0;
-let currentEditPlaceId = null; // 수정 중인 장소 ID
-let tempPlaceData = null;      // 장소 검색 후 임시 저장 데이터
-let sortableInstance = null;   // 드래그 앤 드롭 인스턴스
+let currentEditPlaceId = null;
+let tempPlaceData = null;
+let sortableInstance = null;
 
-// 지도 오버레이 배열 (삭제용)
 let mapMarkers = [];
 let mapPolylines = [];
 let mapRouteMarkers = [];
 
-// [DATA] 전 세계 주요 여행지 데이터 (국가 -> 도시)
+let memberProfileCache = {};
+// 기존 변수들 아래에 추가
+let currentChecklists = []; // 체크리스트 데이터 저장용
+let tempExpenseBuffer = []; // 수정 중인 지출 내역을 임시 저장하는 곳
+
 const LOCATION_DATA = {
-    // 아시아
     "KR": {
         name: "대한민국",
         regions: ["서울", "부산", "제주도", "인천", "강원도(강릉/속초)", "경기도(수원/가평)", "경상도(경주/포항)", "전라도(전주/여수)", "충청도", "대구", "대전", "광주", "울산"]
@@ -83,7 +75,6 @@ const LOCATION_DATA = {
     "MY": { name: "말레이시아", regions: ["쿠알라룸푸르", "코타키나발루", "페낭", "랑카위"] },
     "ID": { name: "인도네시아", regions: ["발리", "자카르타", "롬복", "빈탄"] },
     
-    // 유럽
     "FR": { name: "프랑스", regions: ["파리", "니스", "리옹", "마르세유", "몽생미셸", "스트라스부르", "콜마르"] },
     "IT": { name: "이탈리아", regions: ["로마", "밀라노", "피렌체", "베네치아", "나폴리", "포지타노", "쏘렌토"] },
     "ES": { name: "스페인", regions: ["바르셀로나", "마드리드", "세비야", "그라나다", "발렌시아", "이비자"] },
@@ -92,7 +83,6 @@ const LOCATION_DATA = {
     "CH": { name: "스위스", regions: ["인터라켄", "취리히", "제네바", "루체른", "체르마트", "베른"] },
     "CZ": { name: "동유럽", regions: ["프라하(체코)", "부다페스트(헝가리)", "빈(오스트리아)", "잘츠부르크(오스트리아)"] },
     
-    // 미주/대양주
     "US": {
         name: "미국",
         regions: ["뉴욕", "LA", "라스베이거스", "하와이", "샌프란시스코", "시애틀", "시카고", "올랜도", "마이애미", "보스턴", "워싱턴DC", "괌", "사이판"]
@@ -102,16 +92,11 @@ const LOCATION_DATA = {
     "NZ": { name: "뉴질랜드", regions: ["오클랜드", "퀸스타운", "크라이스트처치", "로토루아"] }
 };
 
-// 선택된 여행지 태그 저장소
 let tempDestinations = [];
 
-
-// ==========================================
-// 3. 공용 팝업 시스템 (커스텀 모달)
-// ==========================================
 function showPopup(title, msg, iconClass, showCancel = false, onConfirm = null) {
     const modal = document.getElementById('common-modal');
-    if (!modal) return alert(msg); // HTML 로드 전 비상 대비
+    if (!modal) return alert(msg);
 
     document.getElementById('common-modal-title').innerText = title;
     document.getElementById('common-modal-msg').innerText = msg;
@@ -119,15 +104,13 @@ function showPopup(title, msg, iconClass, showCancel = false, onConfirm = null) 
     const iconContainer = document.getElementById('common-modal-icon');
     iconContainer.innerHTML = `<i class="${iconClass}"></i>`;
     
-    // 아이콘 색상 자동 지정
-    if(iconClass.includes('check')) iconContainer.style.color = '#40c057'; // 성공(초록)
-    else if(iconClass.includes('exclamation') || iconClass.includes('trash')) iconContainer.style.color = '#fa5252'; // 에러/삭제(빨강)
-    else iconContainer.style.color = '#4dabf7'; // 기본(파랑)
+    if(iconClass.includes('check')) iconContainer.style.color = '#40c057';
+    else if(iconClass.includes('exclamation') || iconClass.includes('trash')) iconContainer.style.color = '#fa5252';
+    else iconContainer.style.color = '#4dabf7';
 
     const actions = document.getElementById('common-modal-actions');
-    actions.innerHTML = ''; // 버튼 초기화
+    actions.innerHTML = '';
 
-    // 확인 버튼
     const okBtn = document.createElement('button');
     okBtn.innerText = showCancel ? '네' : '확인';
     okBtn.className = 'btn-primary';
@@ -138,7 +121,6 @@ function showPopup(title, msg, iconClass, showCancel = false, onConfirm = null) 
     };
     actions.appendChild(okBtn);
 
-    // 취소 버튼
     if (showCancel) {
         const cancelBtn = document.createElement('button');
         cancelBtn.innerText = '아니요';
@@ -151,31 +133,23 @@ function showPopup(title, msg, iconClass, showCancel = false, onConfirm = null) 
     openModal('common-modal');
 }
 
-// 팝업 단축 함수들
 function showSuccess(msg) { showPopup("성공", msg, "fas fa-check-circle"); }
 function showError(msg) { showPopup("오류", msg, "fas fa-exclamation-circle"); }
 function showConfirm(msg, callback) { showPopup("확인", msg, "fas fa-question-circle", true, callback); }
 
-
-// ==========================================
-// 4. 초기화 및 이벤트 리스너 연결
-// ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
     
-    // 안전한 이벤트 연결 헬퍼 (요소가 없으면 에러 없이 넘어감)
     const addListener = (id, event, handler) => {
         const el = document.getElementById(id);
         if (el) el.addEventListener(event, handler);
     };
 
-    // --- 메인 버튼 ---
     addListener('google-login-btn', 'click', handleLogin);
     addListener('logout-btn', 'click', handleLogout); 
-    addListener('create-new-trip-btn', 'click', openCreateTripModal); // [수정] 모달 열기 함수 분리
+    addListener('create-new-trip-btn', 'click', openCreateTripModal);
     addListener('trip-form', 'submit', createNewTrip);
     addListener('back-to-dashboard', 'click', () => showScreen('dashboard-screen'));
     
-    // --- 플래너 내부 기능 ---
     addListener('place-search', 'input', handlePlaceSearch);
     addListener('optimize-route', 'click', optimizeRoute);
     addListener('copy-link-btn', 'click', copyInviteLink);
@@ -183,44 +157,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     addListener('recommend-places', 'click', recommendNearbyPlaces);
     addListener('book-ticket-btn', 'click', redirectToBooking);
     
-    // 시간 선택 모달 확인 버튼
     addListener('confirm-add-place-btn', 'click', confirmAddPlace);
     
-    // --- 프로필 관련 ---
     addListener('save-profile-btn', 'click', saveUserProfile);
     addListener('profile-file-input', 'change', handleProfileImagePreview);
     
-    // --- GPS 내 위치 ---
     addListener('my-location-btn', 'click', handleMyLocation);
 
-    // --- 여행 설정 및 삭제 ---
     addListener('trip-settings-form', 'submit', updateTripSettings);
     addListener('btn-delete-trip', 'click', deleteTrip);
 
-    // --- 여행지 선택 로직 초기화 ---
     initLocationSelectors();
 
-    // --- 초대 링크 처리 ---
     const urlParams = new URLSearchParams(window.location.search);
     const inviteTripId = urlParams.get('invite');
 
-    // --- 인증 상태 감지 (앱 진입점) ---
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
-            await checkUserProfile(user); // 프로필 체크
+            await checkUserProfile(user);
 
             if (inviteTripId) {
-                // 초대 링크로 들어온 경우 자동 참여
                 await joinTrip(inviteTripId);
-                // URL 파라미터 청소
                 window.history.replaceState({}, document.title, window.location.pathname);
             } else {
                 showScreen('dashboard-screen');
             }
             
-            loadUserTrips(); // 목록 로드
-            if(!map) initMapLibrary(); // 지도 라이브러리 미리 로드
+            loadUserTrips();
+            if(!map) initMapLibrary();
         } else {
             currentUser = null;
             showScreen('login-screen');
@@ -228,9 +193,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
-// ==========================================
-// 5. 여행지 선택 로직 (국가 -> 도시)
-// ==========================================
 function initLocationSelectors() {
     const countrySelect = document.getElementById('select-country');
     const regionSelect = document.getElementById('select-region');
@@ -238,7 +200,6 @@ function initLocationSelectors() {
 
     if(!countrySelect) return;
 
-    // 국가 옵션 채우기
     for (const [code, data] of Object.entries(LOCATION_DATA)) {
         const opt = document.createElement('option');
         opt.value = code;
@@ -246,7 +207,6 @@ function initLocationSelectors() {
         countrySelect.appendChild(opt);
     }
 
-    // 국가 변경 시 지역 옵션 갱신
     countrySelect.addEventListener('change', (e) => {
         const code = e.target.value;
         regionSelect.innerHTML = '<option value="">지역 선택</option>';
@@ -264,14 +224,12 @@ function initLocationSelectors() {
         }
     });
 
-    // 추가 버튼 클릭 시 태그 생성
     addBtn.addEventListener('click', () => {
         const countryCode = countrySelect.value;
         const region = regionSelect.value;
         
         if (!countryCode || !region) return; 
 
-        // 중복 및 태그 생성
         const fullText = `${region}, ${LOCATION_DATA[countryCode].name}`;
         if (tempDestinations.includes(fullText)) {
             showError("이미 추가된 지역입니다.");
@@ -295,14 +253,12 @@ function renderDestinationTags() {
     });
 }
 
-// 태그 삭제 (전역 할당)
 window.removeDestinationTag = function(index) {
     tempDestinations.splice(index, 1);
     renderDestinationTags();
 };
 
 function openCreateTripModal() {
-    // 모달 초기화
     tempDestinations = [];
     renderDestinationTags();
     document.getElementById('trip-form').reset();
@@ -311,9 +267,6 @@ function openCreateTripModal() {
     openModal('setup-modal');
 }
 
-// ==========================================
-// 6. 인증 및 프로필
-// ==========================================
 async function handleLogin() { 
     try { await signInWithPopup(auth, provider); } 
     catch(e) { showError("로그인 실패: " + e.message); } 
@@ -326,7 +279,6 @@ function handleLogout() {
     }); 
 }
 
-// 프로필 확인 및 생성 모달
 async function checkUserProfile(user) {
     const userRef = doc(db, "users", user.uid);
     const docSnap = await getDoc(userRef);
@@ -334,7 +286,6 @@ async function checkUserProfile(user) {
     if (!docSnap.exists()) {
         const nickInput = document.getElementById('profile-nickname');
         const prevImg = document.getElementById('profile-preview');
-        // 기본 이미지 (Base64)
         const defaultImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6Ii8+PC9zdmc+';
         
         if(nickInput) nickInput.value = user.displayName;
@@ -384,13 +335,18 @@ function updateDashboardProfile(data) {
     const container = document.getElementById('dashboard-profile-area');
     if (!container) return;
 
-    const fallbackImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6Ii8+PC9zdmc+';
+    const fallbackImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLtMS43OS00LTQtNC00IDEuNzktNCA0IDEuNzkgNCA0IDR6bTAgMmMtMi42NyAwLTggMS4zNC04IDR2MmgxNnYtMmMwLTIuNjYtNS4zMy00LTgtNHoiLz48L3N2Zz4=';
     const imgSrc = data.photoURL || fallbackImg;
 
+    // ✨ 변경된 부분: 
+    // 1. <div>로 감싸서 cursor:pointer (손가락 모양) 추가
+    // 2. onclick="openProfileEdit()" 추가 -> 이걸 눌러야 수정창이 뜹니다.
     container.innerHTML = `
-        <img src="${imgSrc}" class="user-avatar-small" onerror="this.src='${fallbackImg}'">
-        <span class="user-name">${data.displayName}님</span>
-        <button id="logout-btn-dash" class="btn-icon"><i class="fas fa-sign-out-alt"></i></button>
+        <div style="display:flex; align-items:center; gap:10px; cursor:pointer;" onclick="openProfileEdit()">
+            <img src="${imgSrc}" class="user-avatar-small" onerror="this.src='${fallbackImg}'">
+            <span class="user-name">${data.displayName}님</span>
+        </div>
+        <button id="logout-btn-dash" class="btn-icon" style="margin-left:10px;"><i class="fas fa-sign-out-alt"></i></button>
     `;
     
     const logoutBtn = document.getElementById('logout-btn-dash');
@@ -400,9 +356,6 @@ function updateDashboardProfile(data) {
     if(originalLogout) originalLogout.style.display = 'none';
 }
 
-// ==========================================
-// 7. 여행 데이터 관리 (CRUD)
-// ==========================================
 async function joinTrip(tripId) {
     const tripRef = doc(db, "trips", tripId);
     try {
@@ -444,16 +397,14 @@ function loadUserTrips() {
     });
 }
 
-// 새 여행 생성
 async function createNewTrip(e) {
     e.preventDefault();
     const title = document.getElementById('trip-title-input').value;
     
-    // 태그 확인
     if (tempDestinations.length === 0) {
         return showError("최소 한 곳 이상의 여행지를 추가해주세요.");
     }
-    const dest = tempDestinations.join(' / '); // DB 저장용 문자열
+    const dest = tempDestinations.join(' / ');
 
     const start = document.getElementById('start-date').value;
     const end = document.getElementById('end-date').value;
@@ -473,7 +424,6 @@ async function createNewTrip(e) {
     } catch(e) { showError("생성 실패: " + e.message); }
 }
 
-// 여행 설정 열기
 window.openTripSettings = async function(tripId) {
     currentTripId = tripId;
     const docRef = doc(db, "trips", tripId);
@@ -488,7 +438,6 @@ window.openTripSettings = async function(tripId) {
     }
 }
 
-// 여행 정보 수정
 async function updateTripSettings(e) {
     e.preventDefault();
     const tripId = document.getElementById('setting-trip-id').value;
@@ -517,7 +466,6 @@ async function updateTripSettings(e) {
     } catch(e) { showError("수정 실패"); }
 }
 
-// 여행 삭제
 async function deleteTrip() {
     const tripId = document.getElementById('setting-trip-id').value;
     showConfirm("정말 이 여행을 삭제하시겠습니까? (복구 불가)", async () => {
@@ -529,7 +477,6 @@ async function deleteTrip() {
     });
 }
 
-// 여행 불러오기
 window.loadTrip = function(tripId) {
     currentTripId = tripId;
     showScreen('planner-screen');
@@ -538,28 +485,33 @@ window.loadTrip = function(tripId) {
     const inviteInput = document.getElementById('invite-link');
     if(inviteInput) inviteInput.value = inviteUrl;
 
-    onSnapshot(doc(db, "trips", tripId), (docSnap) => {
+    // async 키워드 추가됨
+    onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
         if (!docSnap.exists()) { showScreen('dashboard-screen'); return; }
         currentTripData = docSnap.data();
         
+        // 프로필 정보 가져오기 (닉네임 표시용)
+        await fetchMemberProfiles();
+
         const titleEl = document.getElementById('planner-title');
         if(titleEl) titleEl.innerText = currentTripData.title;
         
         renderDayTabs();
         
-        const socialTab = document.getElementById('tab-social');
-        if(socialTab && socialTab.classList.contains('active')) {
-            renderMembers();
+        // 현재 보고 있는 탭이 있다면 정보 갱신 (닉네임 반영을 위해)
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab) {
+            if (activeTab.id === 'tab-budget') renderBudget();
+            if (activeTab.id === 'tab-social') renderMembers();
         }
         
         if(currentDayIndex >= currentTripData.days.length) currentDayIndex = 0;
         selectDay(currentDayIndex);
     });
 
-    // 지도 중심: 첫 번째 여행지 기준
     if(map && currentTripData) {
-        // "도쿄, 일본 / 오사카, 일본" 형태라면 첫 번째 것만 따옴
-        const firstDest = currentTripData.destination.split(' / ')[0];
+        // 데이터에 목적지가 있다면 지도의 중심으로 잡기
+        const firstDest = currentTripData.destination ? currentTripData.destination.split(' / ')[0] : "Japan";
         new google.maps.Geocoder().geocode({address: firstDest}, (res, status)=>{
             if(status === 'OK') {
                 const loc = res[0].geometry.location;
@@ -569,7 +521,6 @@ window.loadTrip = function(tripId) {
         });
     }
 }
-
 async function saveTrip() {
     if(!currentTripId) return;
     try { 
@@ -577,9 +528,6 @@ async function saveTrip() {
     } catch(e) { console.error(e); }
 }
 
-// ==========================================
-// 8. 지도 및 경로 (일본/해외 Transit 해결)
-// ==========================================
 async function initMapLibrary() {
     try {
         const { Map } = await google.maps.importLibrary("maps");
@@ -644,10 +592,9 @@ function renderMap() {
     }
 }
 
-// [핵심] 날짜 안전 장치
 function getSafeTransitDate(timeStr) {
     const now = new Date();
-    const targetDate = new Date(); // 오늘로 초기화
+    const targetDate = new Date();
 
     if(timeStr) { 
         const [h, m] = timeStr.split(':'); 
@@ -657,12 +604,11 @@ function getSafeTransitDate(timeStr) {
     }
 
     if (targetDate < now) {
-        targetDate.setDate(targetDate.getDate() + 1); // 과거면 내일로
+        targetDate.setDate(targetDate.getDate() + 1);
     }
     return targetDate;
 }
 
-// [핵심] 경로 그리기 (Transit 실패 시 Driving 전환)
 function drawRouteAndInfoButton(origin, destination) {
     const targetDate = getSafeTransitDate(origin.time);
 
@@ -677,7 +623,6 @@ function drawRouteAndInfoButton(origin, destination) {
         if (status === 'OK') {
             renderPolyline(result.routes[0].overview_path, origin, destination);
         } else {
-            // 일본 등 대중교통 데이터 미지원 지역 -> Driving으로 전환
             const requestDriving = {
                 origin: origin.location,
                 destination: destination.location,
@@ -687,7 +632,6 @@ function drawRouteAndInfoButton(origin, destination) {
                 if (statusDriving === 'OK') {
                     renderPolyline(resDriving.routes[0].overview_path, origin, destination);
                 } else {
-                    // 모두 실패 시 직선 (최후의 수단)
                     const path = [origin.location, destination.location];
                     const polyline = new google.maps.Polyline({
                         path: path, map: map, 
@@ -711,7 +655,7 @@ function drawRouteAndInfoButton(origin, destination) {
 function renderPolyline(path, origin, destination) {
     const polyline = new google.maps.Polyline({
         path: path, map: map, 
-        strokeColor: '#364fc7', // 진한 파랑
+        strokeColor: '#364fc7',
         strokeWeight: 7, 
         strokeOpacity: 1.0
     });
@@ -735,22 +679,22 @@ function getPolylineMidpoint(path) {
     return path[Math.floor(path.length / 2)];
 }
 
-function createRouteButton(position, origin, destination) {
-    if(!position) return;
-    const btnDiv = document.createElement('div');
-    btnDiv.className = 'route-info-marker';
-    btnDiv.innerHTML = `INFO <i class="fas fa-info-circle"></i>`;
-    btnDiv.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
-        showRouteDetailModal(origin, destination); 
-    });
-    const infoMarker = new AdvancedMarkerElement({
-        map, position: position, content: btnDiv, title: "정보 확인"
-    });
-    mapRouteMarkers.push(infoMarker);
-}
+//function createRouteButton(position, origin, destination) {
+//    if(!position) return;
+//    const btnDiv = document.createElement('div');
+//    btnDiv.className = 'route-info-marker';
+//    btnDiv.innerHTML = `INFO <i class="fas fa-info-circle"></i>`;
+//    btnDiv.addEventListener('click', (e) => { 
+//        e.stopPropagation(); 
+//        showRouteDetailModal(origin, destination); 
+//    });
+//    const infoMarker = new AdvancedMarkerElement({
+//        map, position: position, content: btnDiv, title: "정보 확인"
+//    });
+//    mapRouteMarkers.push(infoMarker);
+//}
+//
 
-// 상세 정보 모달
 function showRouteDetailModal(origin, dest) {
     const container = document.getElementById('route-comparison');
     if(container) container.innerHTML = '<p style="text-align:center;">경로 정보 로딩 중...</p>';
@@ -758,7 +702,6 @@ function showRouteDetailModal(origin, dest) {
 
     const targetDate = getSafeTransitDate(origin.time);
 
-    // 대중교통 시도
     directionsService.route({
         origin: origin.location, destination: dest.location, 
         travelMode: google.maps.TravelMode.TRANSIT, 
@@ -781,7 +724,6 @@ function showRouteDetailModal(origin, dest) {
                 `;
                 container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
             } else {
-                // 실패 시 안내 문구 + 대체 수단
                 container.innerHTML = '<p style="text-align:center; padding:20px; color:#868e96;">이 구간은 대중교통 정보가 없거나(일본 등), 도보가 빠릅니다.<br>아래 대체 경로를 참고하세요.</p>';
                 container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
             }
@@ -840,26 +782,27 @@ function addOtherModes(origin, dest, container) {
     return wrapper;
 }
 
-// ==========================================
-// 9. 리스트 & 드래그 앤 드롭 (SortableJS)
-// ==========================================
 function renderPlaceList() {
     const list = document.getElementById('places-list');
     if(!list) return;
     list.innerHTML = '';
     
-    currentTripData.days[currentDayIndex].places.forEach((place, idx) => {
+    const places = currentTripData.days[currentDayIndex].places;
+
+    places.forEach((place, idx) => {
         const div = document.createElement('div');
         div.className = 'place-card';
         div.setAttribute('data-id', place.id);
         
         div.onclick = (e) => {
+            // 버튼들을 눌렀을 때는 지도 이동 안 함
             if(e.target.closest('button')) return;
             map.panTo(place.location); map.setZoom(15); 
             fetchWeather(place.location.lat, place.location.lng, place.name);
         };
-        
-        const hasMeta = place.memo || place.cost;
+
+        // 메모가 있을 때만 meta 영역 표시 (비용은 이제 체크 안 함)
+        const hasMeta = !!place.memo;
         
         div.innerHTML = `
             <div class="place-marker-icon ${place.type}">${idx+1}</div>
@@ -874,50 +817,71 @@ function renderPlaceList() {
                         </div>
                     </div>
                 </div>
+
                 <div class="place-meta ${hasMeta?'has-content':''}">
-                    ${place.memo ? `📝 ${place.memo}<br>` : ''} 
-                    ${place.cost ? `💰 ${place.cost.toLocaleString()}원` : ''}
+                    ${place.memo ? `<i class="far fa-sticky-note"></i> ${place.memo}` : ''} 
+                </div>
+
+                <div class="place-footer-actions">
+                    <button class="btn-find-way" onclick="openNavToPlace(${place.location.lat}, ${place.location.lng})">
+                        <i class="fas fa-location-arrow"></i> 길찾기
+                    </button>
                 </div>
             </div>`;
         list.appendChild(div);
     });
 
-    // 드래그 앤 드롭
     if (sortableInstance) sortableInstance.destroy();
     sortableInstance = new Sortable(list, {
         animation: 150,
         ghostClass: 'sortable-ghost',
         onEnd: function (evt) {
-            const oldIdx = evt.oldIndex;
-            const newIdx = evt.newIndex;
-            if (oldIdx === newIdx) return;
-            const places = currentTripData.days[currentDayIndex].places;
-            const movedItem = places.splice(oldIdx, 1)[0];
-            places.splice(newIdx, 0, movedItem);
-            saveTrip();
+            // 정렬 로직은 기존과 동일하게 유지
+             const itemEl = evt.item; 
+             const oldIdx = evt.oldIndex;
+             const newIdx = evt.newIndex;
+             if (oldIdx === newIdx) return;
+
+             const placesArr = currentTripData.days[currentDayIndex].places;
+             const movedItem = placesArr.splice(oldIdx, 1)[0];
+             placesArr.splice(newIdx, 0, movedItem);
+             
+             saveTrip();
+             // (필요 시 재렌더링) renderPlaceList();
         },
     });
 }
 
-// 장소 추가 모달 로직
 let searchTimer;
 function handlePlaceSearch(e) {
     clearTimeout(searchTimer);
     const query = e.target.value;
-    if(query.length < 2) return;
+    if(query.length < 2) {
+        document.getElementById('search-results').classList.remove('active');
+        document.getElementById('search-results-header').style.display = 'none';
+        return;
+    }
     searchTimer = setTimeout(async () => {
         if(!Place) return;
         const { places } = await Place.searchByText({ textQuery: query, fields: ['displayName', 'formattedAddress', 'location', 'types'], locationBias: map.getCenter() });
         const resDiv = document.getElementById('search-results');
-        resDiv.innerHTML = ''; resDiv.classList.add('active');
-        if(places) {
+        const resList = document.getElementById('search-results-list');
+        const resHeader = document.getElementById('search-results-header');
+        
+        resList.innerHTML = '';
+        resDiv.classList.add('active');
+        
+        if(places && places.length > 0) {
+            resHeader.style.display = 'flex';
             places.slice(0, 5).forEach(p => {
                 const div = document.createElement('div');
                 div.className = 'result-item';
                 div.innerHTML = `<b>${p.displayName}</b><br><small>${p.formattedAddress}</small>`;
                 div.onclick = () => { initiateAddPlace({ displayName: p.displayName, formattedAddress: p.formattedAddress, location: p.location, types: p.types }); };
-                resDiv.appendChild(div);
+                resList.appendChild(div);
             });
+        } else {
+            resHeader.style.display = 'none';
         }
     }, 100);
 }
@@ -928,6 +892,7 @@ function initiateAddPlace(p) {
     document.getElementById('new-place-time').value = "10:00"; 
     openModal('time-selection-modal'); 
     document.getElementById('search-results').classList.remove('active'); 
+    document.getElementById('search-results-header').style.display = 'none';
     document.getElementById('place-search').value = ''; 
 }
 
@@ -953,7 +918,6 @@ function confirmAddPlace() {
     tempPlaceData = null;
 }
 
-// GPS 내 위치
 function handleMyLocation() {
     if (!navigator.geolocation) {
         showError("브라우저가 위치 정보를 지원하지 않습니다.");
@@ -982,7 +946,6 @@ function handleMyLocation() {
     );
 }
 
-// [NEW] 주변 명소 추천 (모달)
 async function recommendNearbyPlaces() { 
     if (!map) return; 
     try { 
@@ -1030,9 +993,6 @@ async function recommendNearbyPlaces() {
     } 
 }
 
-// ==========================================
-// 10. 기타 헬퍼 (Window 전역 등록)
-// ==========================================
 window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -1045,6 +1005,7 @@ window.switchTab = function(tabName) {
     
     if(tabName === 'budget') renderBudget();
     if(tabName === 'social') renderMembers();
+    if(tabName === 'checklist') renderChecklists();
 };
 
 function renderDayTabs() { 
@@ -1067,46 +1028,86 @@ async function renderMembers() {
     list.innerHTML = '';
     const emails = currentTripData.members;
     
+    // 현재 로그인한 사람이 방장인지 확인
+    const isOwner = currentTripData.owner === currentUser.email;
+
     try {
-        const q = query(collection(db, "users"), where("email", "in", emails.slice(0, 10)));
-        const snap = await getDocs(q);
-        const userMap = {};
-        snap.forEach(d => userMap[d.data().email] = d.data());
+        // 프로필 캐시가 없으면 가져오기
+        if (Object.keys(memberProfileCache).length === 0) await fetchMemberProfiles();
         
         emails.forEach(email => {
-            const user = userMap[email] || { displayName: email.split('@')[0], photoURL: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6Ii8+PC9zdmc+' };
+            const user = memberProfileCache[email] || { displayName: email.split('@')[0], photoURL: 'https://via.placeholder.com/50' };
+            const isMe = email === currentUser.email;
+            
+            // 삭제 버튼: 방장이고, 대상이 본인이 아닐 때만 표시
+            let deleteBtn = '';
+            if (isOwner && !isMe) {
+                deleteBtn = `<div class="member-delete-btn" onclick="removeMember('${email}')"><i class="fas fa-times"></i></div>`;
+            }
+
             list.innerHTML += `
-                <div class="member-item">
-                    <img src="${user.photoURL}" class="member-avatar" style="width:50px; height:50px; border-radius:50%; object-fit:cover; margin-bottom:5px;">
-                    <div class="member-name" style="font-size:0.85em; font-weight:600;">${user.displayName}</div>
+                <div class="member-item" style="position:relative;">
+                    <div style="position:relative; display:inline-block;">
+                        <img src="${user.photoURL}" class="member-avatar">
+                        ${deleteBtn}
+                    </div>
+                    <div class="member-name">${user.displayName}</div>
                 </div>`;
         });
     } catch(e) {
-        emails.forEach(m => list.innerHTML += `<div class="member-item">${m.split('@')[0]}</div>`);
+        console.error(e);
     }
 }
 
 window.openEditPlaceModal = function(id) { 
-    currentEditPlaceId=id; 
-    const p=currentTripData.days[currentDayIndex].places.find(p=>p.id===id); 
-    if(!p)return; 
-    document.getElementById('edit-place-name').value=p.name; 
-    document.getElementById('edit-place-time').value=p.time; 
-    document.getElementById('edit-place-memo').value=p.memo||''; 
-    document.getElementById('edit-place-cost').value=p.cost||''; 
+    currentEditPlaceId = id; 
+    const p = currentTripData.days[currentDayIndex].places.find(p => p.id === id); 
+    if (!p) return; 
+
+    document.getElementById('edit-place-name').value = p.name; 
+    document.getElementById('edit-place-time').value = p.time; 
+    document.getElementById('edit-place-memo').value = p.memo || ''; 
+    
+    // 기존 데이터에 expenseItems가 없으면(옛날 데이터) cost 기반으로 하나 만들어줌
+    if (!p.expenseItems || p.expenseItems.length === 0) {
+        if (p.cost > 0) {
+            tempExpenseBuffer = [{
+                id: Date.now(),
+                name: "전체 비용",
+                price: p.cost,
+                members: p.involvedMembers || currentTripData.members // 정보 없으면 전원
+            }];
+        } else {
+            tempExpenseBuffer = [];
+        }
+    } else {
+        // 깊은 복사 (수정하다가 취소할 수도 있으니까)
+        tempExpenseBuffer = JSON.parse(JSON.stringify(p.expenseItems));
+    }
+
+    renderExpenseBuffer(); // 리스트 그리기
+    renderNewItemMemberSelect(); // 멤버 선택 버튼 그리기
+
     openModal('place-edit-modal'); 
 }
-
 function savePlaceDetails() { 
-    if(!currentEditPlaceId)return; 
-    const p=currentTripData.days[currentDayIndex].places.find(p=>p.id===currentEditPlaceId); 
-    if(p){ 
+    if (!currentEditPlaceId) return; 
+    const p = currentTripData.days[currentDayIndex].places.find(p => p.id === currentEditPlaceId); 
+    if (p) { 
         p.name = document.getElementById('edit-place-name').value;
-        p.time=document.getElementById('edit-place-time').value; 
-        p.memo=document.getElementById('edit-place-memo').value; 
-        p.cost=Number(document.getElementById('edit-place-cost').value); 
+        p.time = document.getElementById('edit-place-time').value; 
+        p.memo = document.getElementById('edit-place-memo').value; 
+        
+        // 상세 내역 저장
+        p.expenseItems = tempExpenseBuffer;
+        
+        // 총 비용 업데이트 (지도나 리스트에 표시용)
+        p.cost = tempExpenseBuffer.reduce((sum, item) => sum + item.price, 0);
+
         saveTrip(); 
         closeModal('place-edit-modal'); 
+        renderPlaceList(); // 리스트 갱신
+        renderBudget();    // 가계부 갱신
     } 
 }
 
@@ -1116,22 +1117,114 @@ window.removePlace = function(id) {
         saveTrip(); 
     });
 }
-
 function renderBudget() { 
-    const l=document.getElementById('budget-list'); 
-    if(!l) return;
-    let t=0; l.innerHTML=''; 
-    currentTripData.days.forEach(d=>{
-        d.places.forEach(p=>{
-            if(p.cost>0){
-                t+=p.cost;
-                l.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee;"><span>${p.name}</span><span>${p.cost.toLocaleString()}원</span></div>`;
+    const l = document.getElementById('budget-list'); 
+    if (!l) return;
+    
+    let totalSpent = 0;
+    const memberSpendMap = {}; 
+
+    // 1. 비용 계산 로직 (기존과 동일하지만, 데이터 집계용)
+    currentTripData.days.forEach(d => {
+        d.places.forEach(p => {
+            // 상세 내역(영수증)이 있는 경우
+            if (p.expenseItems && p.expenseItems.length > 0) {
+                p.expenseItems.forEach(item => {
+                    totalSpent += item.price;
+                    // 혹시라도 멤버가 0명이면 1로 계산 방지
+                    const count = item.members.length > 0 ? item.members.length : 1;
+                    const splitPrice = item.price / count;
+                    
+                    item.members.forEach(email => {
+                        memberSpendMap[email] = (memberSpendMap[email] || 0) + splitPrice;
+                    });
+                });
+            } 
+            // 상세 내역은 없는데 총액만 있는 경우 (구 데이터 호환용)
+            else if (p.cost > 0) {
+                totalSpent += p.cost;
+                const members = p.involvedMembers || currentTripData.members;
+                const count = members.length > 0 ? members.length : 1;
+                const splitPrice = p.cost / count;
+                
+                members.forEach(email => {
+                    memberSpendMap[email] = (memberSpendMap[email] || 0) + splitPrice;
+                });
             }
         });
     }); 
-    document.getElementById('total-cost').innerText=`${t.toLocaleString()} 원`; 
-}
 
+    // 2. 화면 그리기
+    l.innerHTML = '';
+    
+    // (1) 멤버별 정산 요약 (✨ 닉네임 적용 부분)
+    const summaryHeader = document.createElement('h4');
+    summaryHeader.innerText = '📊 최종 정산 (개인별 부담금)';
+    summaryHeader.style.margin = '20px 0 10px 0';
+    l.appendChild(summaryHeader);
+
+    // 많이 낸 사람 순서로 정렬
+    const sortedMembers = Object.entries(memberSpendMap).sort((a,b) => b[1] - a[1]);
+
+    for (const [email, cost] of sortedMembers) {
+        // ★ 캐시에서 닉네임 가져오기 (없으면 이메일 앞부분)
+        const profile = memberProfileCache[email] || { displayName: email.split('@')[0] };
+        const name = profile.displayName;
+
+        l.innerHTML += `
+            <div class="settlement-card">
+                <span style="font-weight:600;"><i class="fas fa-user"></i> ${name}</span>
+                <span style="color:#339af0; font-weight:bold;">${Math.round(cost).toLocaleString()}원</span>
+            </div>
+        `;
+    }
+
+    // (2) 상세 지출 리스트
+    const detailHeader = document.createElement('h4');
+    detailHeader.innerText = '📝 지출 기록';
+    detailHeader.style.margin = '30px 0 10px 0';
+    l.appendChild(detailHeader);
+
+    currentTripData.days.forEach(d => {
+        d.places.forEach(p => {
+            // 비용이 있거나 상세 내역이 있는 경우 표시
+            let displayCost = p.cost;
+            if(p.expenseItems && p.expenseItems.length > 0) {
+                displayCost = p.expenseItems.reduce((acc, cur) => acc + cur.price, 0);
+            }
+
+            if (displayCost > 0) {
+                // 상세 내역 HTML 생성 (여기서도 닉네임 적용)
+                let detailsHtml = '';
+                if (p.expenseItems && p.expenseItems.length > 0) {
+                    detailsHtml = p.expenseItems.map(item => {
+                        // 참여 멤버들을 닉네임으로 변환해서 나열
+                        const memberNames = item.members.map(m => {
+                            const prof = memberProfileCache[m] || { displayName: m.split('@')[0] };
+                            return prof.displayName;
+                        }).join(', ');
+
+                        return `<div style="font-size:0.85em; color:#868e96; display:flex; justify-content:space-between;">
+                            <span>- ${item.name} (${memberNames})</span>
+                            <span>${item.price.toLocaleString()}원</span>
+                        </div>`;
+                    }).join('');
+                }
+
+                l.innerHTML += `
+                    <div style="padding:12px 0; border-bottom:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span style="font-weight:600;">${p.name}</span>
+                            <span style="font-weight:700;">${displayCost.toLocaleString()}원</span>
+                        </div>
+                        ${detailsHtml}
+                    </div>`;
+            }
+        });
+    });
+
+    document.getElementById('total-cost').innerText = `${totalSpent.toLocaleString()} 원`; 
+}
 async function fetchWeather(lat, lon, name) {
     const widget = document.getElementById('weather-widget');
     if(!widget) return;
@@ -1165,34 +1258,262 @@ function optimizeRoute() {
     });
 }
 
-// 검색 결과 닫기 함수
 window.closeSearchResults = function() {
   const resultsDiv = document.getElementById('search-results');
+  const resHeader = document.getElementById('search-results-header');
   if (resultsDiv) {
     resultsDiv.classList.remove('active');
   }
+  if (resHeader) {
+    resHeader.style.display = 'none';
+  }
 };
 
-// 외부 클릭 시 검색 결과 닫기
 document.addEventListener('click', (e) => {
   const searchBox = document.querySelector('.search-box');
   const resultsDiv = document.getElementById('search-results');
   
   if (searchBox && resultsDiv && !searchBox.contains(e.target)) {
     resultsDiv.classList.remove('active');
+    const resHeader = document.getElementById('search-results-header');
+    if (resHeader) resHeader.style.display = 'none';
   }
 });
 
-// ESC 키로 검색 결과 닫기
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeSearchResults();
   }
 });
 
+function renderChecklists() {
+    const container = document.getElementById('checklist-container');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    // 데이터가 없으면 초기값 생성
+    if (!currentTripData.checklists) {
+        currentTripData.checklists = [
+            { id: Date.now(), title: "준비물", items: [] },
+            { id: Date.now()+1, title: "사고 싶은 것", items: [] }
+        ];
+    }
+
+    currentTripData.checklists.forEach((list, listIdx) => {
+        const div = document.createElement('div');
+        div.className = 'checklist-card';
+        div.innerHTML = `
+            <div class="checklist-header">
+                <input type="text" class="checklist-title" value="${list.title}" onchange="updateChecklistTitle(${listIdx}, this.value)">
+                <button class="btn-icon" style="color:#fa5252" onclick="deleteChecklist(${listIdx})"><i class="fas fa-trash-alt"></i></button>
+            </div>
+            <div id="cl-items-${listIdx}"></div>
+            <div style="display:flex; gap:5px; margin-top:10px;">
+                <input type="text" class="checklist-input" id="cl-input-${listIdx}" placeholder="항목 추가..." onkeypress="if(event.key==='Enter') addChecklistItem(${listIdx})">
+                <button class="btn-secondary" onclick="addChecklistItem(${listIdx})"><i class="fas fa-plus"></i></button>
+            </div>
+        `;
+        container.appendChild(div);
+        
+        const itemContainer = div.querySelector(`#cl-items-${listIdx}`);
+        list.items.forEach((item, itemIdx) => {
+            itemContainer.innerHTML += `
+                <div class="checklist-item ${item.checked ? 'checked' : ''}">
+                    <input type="checkbox" class="checklist-checkbox" ${item.checked ? 'checked' : ''} onchange="toggleChecklistItem(${listIdx}, ${itemIdx})">
+                    <span style="flex:1;">${item.text}</span>
+                    <i class="fas fa-times" style="cursor:pointer; color:#dee2e6;" onclick="deleteChecklistItem(${listIdx}, ${itemIdx})"></i>
+                </div>
+            `;
+        });
+    });
+}
+
+// 체크리스트 관련 헬퍼 함수들
+window.addNewChecklistCategory = function() {
+    currentTripData.checklists.push({ id: Date.now(), title: "새 리스트", items: [] });
+    saveTrip(); renderChecklists();
+};
+window.updateChecklistTitle = function(idx, val) { currentTripData.checklists[idx].title = val; saveTrip(); };
+window.deleteChecklist = function(idx) { 
+    showConfirm("리스트를 삭제할까요?", () => { currentTripData.checklists.splice(idx, 1); saveTrip(); renderChecklists(); }); 
+};
+window.addChecklistItem = function(listIdx) {
+    const input = document.getElementById(`cl-input-${listIdx}`);
+    if (!input.value.trim()) return;
+    currentTripData.checklists[listIdx].items.push({ text: input.value, checked: false });
+    saveTrip(); renderChecklists();
+};
+window.toggleChecklistItem = function(listIdx, itemIdx) {
+    const item = currentTripData.checklists[listIdx].items[itemIdx];
+    item.checked = !item.checked;
+    saveTrip(); renderChecklists();
+};
+window.deleteChecklistItem = function(listIdx, itemIdx) {
+    currentTripData.checklists[listIdx].items.splice(itemIdx, 1);
+    saveTrip(); renderChecklists();
+};
 function copyInviteLink() { const copyText = document.getElementById("invite-link"); copyText.select(); navigator.clipboard.writeText(copyText.value).then(() => { showSuccess("링크 복사 완료!"); }); }
 function redirectToBooking() { const places = currentTripData.days[currentDayIndex].places; if (places.length === 0) return; const lastPlace = places[places.length - 1]; const query = encodeURIComponent(`${currentTripData.destination} ${lastPlace.name} ticket`); window.open(`https://www.google.com/search?q=${query}`, '_blank'); }
 
 function openModal(id) { document.getElementById(id).classList.add('active'); }
 window.closeModal = (id) => document.getElementById(id).classList.remove('active');
 function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+
+
+function renderNewItemMemberSelect() {
+    const container = document.getElementById('new-item-members');
+    container.innerHTML = '';
+    
+    currentTripData.members.forEach(email => {
+        // 기존: const name = email.split('@')[0];
+        // 변경: 캐시에서 닉네임 가져오기
+        const profile = memberProfileCache[email] || { displayName: email.split('@')[0] };
+        const name = profile.displayName;
+        
+        const chip = document.createElement('div');
+        chip.className = 'member-select-chip selected'; 
+        chip.innerHTML = `${name}`; // 닉네임 표시
+        chip.dataset.email = email;
+        chip.onclick = () => chip.classList.toggle('selected');
+        container.appendChild(chip);
+    });
+}
+
+// "항목 추가하기" 버튼 눌렀을 때
+window.addExpenseItemToBuffer = function() {
+    const nameInput = document.getElementById('new-item-name');
+    const priceInput = document.getElementById('new-item-price');
+    const name = nameInput.value.trim();
+    const price = Number(priceInput.value);
+
+    if (!name || price <= 0) return showError("품목명과 가격을 입력하세요.");
+
+    // 선택된 멤버 확인
+    const selectedChips = document.querySelectorAll('#new-item-members .member-select-chip.selected');
+    if (selectedChips.length === 0) return showError("최소 1명의 멤버를 선택하세요.");
+    
+    const members = Array.from(selectedChips).map(c => c.dataset.email);
+
+    tempExpenseBuffer.push({
+        id: Date.now(),
+        name: name,
+        price: price,
+        members: members
+    });
+
+    // 입력창 초기화
+    nameInput.value = '';
+    priceInput.value = '';
+    renderNewItemMemberSelect(); // 멤버 선택 다시 전원 선택으로 리셋
+    renderExpenseBuffer();
+}
+
+// 리스트 화면에 그리기
+function renderExpenseBuffer() {
+    const list = document.getElementById('expense-items-list');
+    const totalPreview = document.getElementById('edit-total-preview');
+    list.innerHTML = '';
+    
+    let total = 0;
+
+    tempExpenseBuffer.forEach((item, idx) => {
+        total += item.price;
+        // 멤버 이름들 표시 (예: 이서원, 문승환 외 1명)
+        const memberNames = item.members.map(e => e.split('@')[0]).join(', ');
+        
+        list.innerHTML += `
+            <div class="expense-item-row">
+                <div>
+                    <div class="expense-info"><b>${item.name}</b> : ${item.price.toLocaleString()}원</div>
+                    <div class="expense-members"><i class="fas fa-user-friends"></i> ${memberNames}</div>
+                </div>
+                <button class="btn-icon" style="color:#fa5252" onclick="removeExpenseItemFromBuffer(${idx})">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+    });
+    
+    totalPreview.innerText = `${total.toLocaleString()}원`;
+}
+window.openGoogleMapRoute = function(startLat, startLng, endLat, endLng) {
+    // 구글 맵 웹사이트 URL (앱이 있으면 앱으로 연결됨)
+    // api=1 : API 모드
+    // origin : 출발지 좌표
+    // destination : 도착지 좌표
+    // travelmode : transit (대중교통 우선)
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${startLat},${startLng}&destination=${endLat},${endLng}&travelmode=transit`;
+    
+    window.open(url, '_blank');
+}
+
+window.openNavToPlace = function(lat, lng) {
+    // 구글 맵 URL 스킴
+    // destination: 목적지 좌표
+    // dir_action=navigate: 바로 내비게이션/길찾기 모드 진입
+    // (출발지를 입력하지 않으면 자동으로 '현재 위치'가 됩니다)
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=transit`;
+    window.open(url, '_blank');
+}
+window.removeExpenseItemFromBuffer = function(idx) {
+    tempExpenseBuffer.splice(idx, 1);
+    renderExpenseBuffer();
+}
+async function fetchMemberProfiles() {
+    if (!currentTripData || !currentTripData.members) return;
+    
+    // 1. 일단 기본값(이메일 앞부분)으로 초기화
+    currentTripData.members.forEach(email => {
+        if (!memberProfileCache[email]) {
+            memberProfileCache[email] = { displayName: email.split('@')[0], photoURL: null };
+        }
+    });
+
+    try {
+        // 2. Firestore에서 실제 유저 정보 가져오기
+        const emails = currentTripData.members;
+        // Firestore 'in' 쿼리는 최대 10개까지만 가능하므로 쪼개서 요청
+        const chunks = [];
+        for (let i = 0; i < emails.length; i += 10) {
+            chunks.push(emails.slice(i, i + 10));
+        }
+
+        for (const chunk of chunks) {
+            const q = query(collection(db, "users"), where("email", "in", chunk));
+            const snap = await getDocs(q);
+            snap.forEach(doc => {
+                const data = doc.data();
+                memberProfileCache[data.email] = data; // 캐시에 저장
+            });
+        }
+    } catch (e) {
+        console.warn("프로필 로드 중 오류(무시 가능):", e);
+    }
+}
+
+window.removeMember = function(email) {
+    if (!confirm(`${email} 님을 여행에서 내보내시겠습니까?`)) return;
+    
+    const tripRef = doc(db, "trips", currentTripId);
+    updateDoc(tripRef, {
+        members: arrayRemove(email)
+    }).then(() => {
+        showSuccess("멤버를 삭제했습니다.");
+        // renderMembers는 onSnapshot에 의해 자동 갱신됨
+    }).catch((e) => {
+        showError("삭제 실패: " + e.message);
+    });
+}
+
+window.openProfileEdit = function() {
+    // 현재 내 정보 가져오기 (캐시 또는 DB)
+    const myProfile = memberProfileCache[currentUser.email] || { 
+        displayName: currentUser.displayName, 
+        photoURL: currentUser.photoURL 
+    };
+
+    document.getElementById('profile-nickname').value = myProfile.displayName;
+    document.getElementById('profile-preview').src = myProfile.photoURL || 'https://via.placeholder.com/100';
+    
+    openModal('profile-modal');
+}

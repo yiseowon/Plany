@@ -54,6 +54,7 @@
             <div class="menu-tabs">
                 <button class="tab-btn active" onclick="switchTab('plan')">일정</button>
                 <button class="tab-btn" onclick="switchTab('budget')">가계부</button>
+                <button class="tab-btn" onclick="switchTab('checklist')">체크리스트</button>
                 <button class="tab-btn" onclick="switchTab('social')">멤버</button>
             </div>
 
@@ -91,7 +92,15 @@
                 <div id="budget-list"></div>
             </div>
 
+            
 
+            <div id="tab-checklist" class="tab-content">
+                <div id="checklist-container"></div>
+                    <button class="btn-secondary full-width" onclick="addNewChecklistCategory()" style="margin-top:15px; border-style:dashed;">
+                        <i class="fas fa-plus"></i> 새 리스트 추가 (예: 쇼핑, 짐싸기)
+                    </button>
+            
+                </div>
             <div id="tab-social" class="tab-content">
                 <h3>여행 멤버</h3>
                 <div id="member-list" class="member-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; padding:15px 0;"></div>
@@ -193,16 +202,55 @@
 
 
     <div id="place-edit-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-modal" onclick="closeModal('place-edit-modal')">&times;</span>
-            <h3>정보 수정</h3>
-            <div class="form-group"><label>이름</label><input type="text" id="edit-place-name" class="form-input"></div>
-            <div class="form-group"><label>방문 시간</label><input type="time" id="edit-place-time" class="form-input"></div>
-            <div class="form-group"><label>메모</label><textarea id="edit-place-memo" class="form-input" rows="2"></textarea></div>
-            <div class="form-group"><label>비용 (원)</label><input type="number" id="edit-place-cost" class="form-input"></div>
-            <button id="save-place-btn" class="btn-primary">저장</button>
+    <div class="modal-content" style="max-width: 500px;">
+        <span class="close-modal" onclick="closeModal('place-edit-modal')">&times;</span>
+        <h3>📝 상세 정보 및 정산</h3>
+        
+        <div class="form-group">
+            <label>장소명</label>
+            <input type="text" id="edit-place-name" class="form-input">
         </div>
+        <div class="form-group">
+            <div style="display:flex; gap:10px;">
+                <div style="flex:1;">
+                    <label>방문 시간</label>
+                    <input type="time" id="edit-place-time" class="form-input">
+                </div>
+                <div style="flex:2;">
+                    <label>메모</label>
+                    <input type="text" id="edit-place-memo" class="form-input" placeholder="간단한 메모">
+                </div>
+            </div>
+        </div>
+
+        <hr style="border: 0; border-top: 1px dashed #dee2e6; margin: 20px 0;">
+
+        <div class="form-group">
+            <label style="display:flex; justify-content:space-between; align-items:center;">
+                <span>🧾 지출 내역 (영수증)</span>
+                <span id="edit-total-preview" style="color:#339af0; font-weight:bold;">0원</span>
+            </label>
+            
+            <div id="expense-items-list" class="expense-list-container"></div>
+
+            <div class="expense-input-row">
+                <input type="text" id="new-item-name" placeholder="품목명 (예: 내 라멘)" style="flex:2;">
+                <input type="number" id="new-item-price" placeholder="금액" style="flex:1;">
+            </div>
+            
+            <div style="margin-top:8px;">
+                <p style="font-size:0.8em; color:#868e96; margin-bottom:5px;">누구랑 나눌까요?</p>
+                <div id="new-item-members" class="member-select-grid"></div>
+            </div>
+
+            <button type="button" class="btn-secondary full-width" onclick="addExpenseItemToBuffer()" style="margin-top:10px; border-style:dashed;">
+                <i class="fas fa-plus"></i> 항목 추가하기
+            </button>
+        </div>
+
+        <button id="save-place-btn" class="btn-primary full-width" style="margin-top:15px;">저장 완료</button>
     </div>
+</div>
 
 
     <div id="route-detail-modal" class="modal">
