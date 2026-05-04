@@ -1,0 +1,7 @@
+*.local
+*.log
+.env
+.env.*
+firebase-debug.log
+service-account*.json
+*-service-account.json
