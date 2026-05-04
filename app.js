@@ -183,7 +183,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
-            await checkUserProfile(user);
+            const profileReady = await checkUserProfile(user);
+            if (!profileReady) return;
 
             if (inviteTripId) {
                 await joinTrip(inviteTripId);
@@ -316,8 +317,14 @@ function handleLogout() {
 }
 
 async function checkUserProfile(user) {
-    const userRef = doc(db, "users", user.uid);
-    const docSnap = await getDoc(userRef);
+    let docSnap;
+    try {
+        const userRef = doc(db, "users", user.uid);
+        docSnap = await getDoc(userRef);
+    } catch (e) {
+        showError(formatFirebaseDataError(e));
+        return false;
+    }
 
     if (!docSnap.exists()) {
         const nickInput = document.getElementById('profile-nickname');
@@ -331,6 +338,7 @@ async function checkUserProfile(user) {
     } else {
         updateDashboardProfile(docSnap.data());
     }
+    return true;
 }
 
 async function saveUserProfile() {
@@ -430,7 +438,21 @@ function loadUserTrips() {
             `;
             listEl.appendChild(div);
         });
+    }, (error) => {
+        console.error(error);
+        showError(formatFirebaseDataError(error));
     });
+}
+
+function formatFirebaseDataError(error) {
+    const code = error?.code || '';
+    if (code === 'permission-denied') {
+        return 'Firebase Firestore 권한이 막혀 있습니다. 예전에 만든 테스트 모드 보안 규칙이 만료됐을 가능성이 큽니다. Firestore Rules를 다시 배포해야 합니다.';
+    }
+    if (code === 'unavailable') {
+        return 'Firebase에 연결하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.';
+    }
+    return `Firebase 데이터 오류: ${error?.message || '알 수 없는 오류가 발생했습니다.'}`;
 }
 
 async function createNewTrip(e) {
