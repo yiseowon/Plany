@@ -41,7 +41,6 @@ let Place, AdvancedMarkerElement, PinElement, Geometry;
 let currentUser = null;
 let currentTripId = null;
 let currentTripData = null;
-let cloudDisabled = false;
 let currentDayIndex = 0;
 let currentEditPlaceId = null;
 let tempPlaceData = null;
@@ -323,16 +322,6 @@ async function checkUserProfile(user) {
         const userRef = doc(db, "users", user.uid);
         docSnap = await getDoc(userRef);
     } catch (e) {
-        if ((e?.code || '') === 'permission-denied') {
-            cloudDisabled = true;
-            updateDashboardProfile({
-                displayName: user.displayName || user.email.split('@')[0],
-                photoURL: user.photoURL,
-                email: user.email
-            });
-            showError(formatFirebaseDataError(e) + ' 우선 이 브라우저에 저장되는 로컬 모드로 계속합니다.');
-            return true;
-        }
         showError(formatFirebaseDataError(e));
         return false;
     }
@@ -423,11 +412,6 @@ async function joinTrip(tripId) {
 }
 
 function loadUserTrips() {
-    if (cloudDisabled) {
-        renderLocalTripList();
-        return;
-    }
-
     const q = query(collection(db, "trips"), where("members", "array-contains", currentUser.email));
     onSnapshot(q, (snapshot) => {
         const listEl = document.getElementById('trip-list');
@@ -456,59 +440,7 @@ function loadUserTrips() {
         });
     }, (error) => {
         console.error(error);
-        if ((error?.code || '') === 'permission-denied') {
-            cloudDisabled = true;
-            renderLocalTripList();
-        }
         showError(formatFirebaseDataError(error));
-    });
-}
-
-function getLocalTrips() {
-    try {
-        return JSON.parse(localStorage.getItem(`plany-local-trips-${currentUser.email}`) || '[]');
-    } catch {
-        return [];
-    }
-}
-
-function setLocalTrips(trips) {
-    localStorage.setItem(`plany-local-trips-${currentUser.email}`, JSON.stringify(trips));
-}
-
-function saveLocalTrip(trip) {
-    const trips = getLocalTrips();
-    const index = trips.findIndex(t => t.id === trip.id);
-    if (index >= 0) trips[index] = trip;
-    else trips.push(trip);
-    setLocalTrips(trips);
-}
-
-function renderLocalTripList() {
-    const listEl = document.getElementById('trip-list');
-    if (!listEl) return;
-
-    const trips = getLocalTrips();
-    listEl.innerHTML = '';
-
-    if (!trips.length) {
-        listEl.innerHTML = '<div style="text-align:center; padding:40px; color:#adb5bd;">Firebase 규칙이 막혀 로컬 모드로 실행 중입니다.<br>새 여행은 이 브라우저에만 저장됩니다.</div>';
-        return;
-    }
-
-    trips.forEach(trip => {
-        const div = document.createElement('div');
-        div.className = 'trip-card';
-        div.innerHTML = `
-            <div class="trip-info">
-                <h3>${trip.title}</h3>
-                <p style="color:#868e96; margin-top:5px;">${trip.destination} | ${trip.startDate} · 로컬 저장</p>
-            </div>
-            <div class="trip-actions">
-                <button class="btn-primary" onclick="window.loadTrip('${trip.id}')">입장</button>
-            </div>
-        `;
-        listEl.appendChild(div);
     });
 }
 
@@ -543,32 +475,11 @@ async function createNewTrip(e) {
         owner: currentUser.email, members: [currentUser.email], days: days
     };
 
-    if (cloudDisabled) {
-        newTrip.id = `local-${Date.now()}`;
-        saveLocalTrip(newTrip);
-        closeModal('setup-modal');
-        renderLocalTripList();
-        window.loadTrip(newTrip.id);
-        return;
-    }
-
     try {
         const docRef = await addDoc(collection(db, "trips"), newTrip);
         closeModal('setup-modal');
         window.loadTrip(docRef.id);
-    } catch(e) {
-        if ((e?.code || '') === 'permission-denied') {
-            cloudDisabled = true;
-            newTrip.id = `local-${Date.now()}`;
-            saveLocalTrip(newTrip);
-            closeModal('setup-modal');
-            renderLocalTripList();
-            window.loadTrip(newTrip.id);
-            showError(formatFirebaseDataError(e) + ' 방금 만든 여행은 로컬에 저장했습니다.');
-            return;
-        }
-        showError("생성 실패: " + e.message);
-    }
+    } catch(e) { showError("생성 실패: " + e.message); }
 }
 
 window.openTripSettings = async function(tripId) {
@@ -632,21 +543,6 @@ window.loadTrip = function(tripId) {
     const inviteInput = document.getElementById('invite-link');
     if(inviteInput) inviteInput.value = inviteUrl;
 
-    if (cloudDisabled || String(tripId).startsWith('local-')) {
-        const trip = getLocalTrips().find(t => t.id === tripId);
-        if (!trip) { showScreen('dashboard-screen'); return; }
-        currentTripData = trip;
-
-        const titleEl = document.getElementById('planner-title');
-        if(titleEl) titleEl.innerText = `${currentTripData.title} · 로컬`;
-
-        renderDayTabs();
-        if(currentDayIndex >= currentTripData.days.length) currentDayIndex = 0;
-        selectDay(currentDayIndex);
-        if(!map) initMapLibrary();
-        return;
-    }
-
     // async 키워드 추가됨
     onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
         if (!docSnap.exists()) { showScreen('dashboard-screen'); return; }
@@ -685,11 +581,6 @@ window.loadTrip = function(tripId) {
 }
 async function saveTrip() {
     if(!currentTripId) return;
-    if (cloudDisabled || String(currentTripId).startsWith('local-')) {
-        currentTripData.id = currentTripId;
-        saveLocalTrip(currentTripData);
-        return;
-    }
     try { 
         await updateDoc(doc(db, "trips", currentTripId), {
             days: currentTripData.days,
