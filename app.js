@@ -2,8 +2,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { 
     getAuth, 
     GoogleAuthProvider, 
+    browserLocalPersistence,
+    getRedirectResult,
     signInWithPopup, 
+    signInWithRedirect,
     signOut, 
+    setPersistence,
     onAuthStateChanged 
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { 
@@ -27,6 +31,8 @@ const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
+auth.languageCode = 'ko';
+provider.setCustomParameters({ prompt: 'select_account' });
 
 let map;
 let directionsService;
@@ -168,6 +174,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     addListener('btn-delete-trip', 'click', deleteTrip);
 
     initLocationSelectors();
+    setPersistence(auth, browserLocalPersistence).catch((e) => console.warn('Auth persistence setup failed:', e));
+    getRedirectResult(auth).catch((e) => showError(formatAuthError(e)));
 
     const urlParams = new URLSearchParams(window.location.search);
     const inviteTripId = urlParams.get('invite');
@@ -268,8 +276,36 @@ function openCreateTripModal() {
 }
 
 async function handleLogin() { 
-    try { await signInWithPopup(auth, provider); } 
-    catch(e) { showError("로그인 실패: " + e.message); } 
+    try {
+        await setPersistence(auth, browserLocalPersistence);
+        await signInWithPopup(auth, provider);
+    } catch(e) {
+        const code = e?.code || '';
+        if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
+            await signInWithRedirect(auth, provider);
+            return;
+        }
+        showError(formatAuthError(e));
+    } 
+}
+
+function formatAuthError(error) {
+    const code = error?.code || '';
+    const host = window.location.hostname || '현재 도메인';
+
+    if (code === 'auth/unauthorized-domain') {
+        return `Firebase 로그인 승인 도메인에 ${host}가 없습니다. Firebase Console > Authentication > Settings > Authorized domains에 plany.life, www.plany.life, yiseowon.github.io, localhost를 추가해 주세요.`;
+    }
+    if (code === 'auth/operation-not-allowed') {
+        return 'Firebase Authentication에서 Google 로그인 제공자가 꺼져 있습니다. Sign-in method에서 Google provider를 활성화해 주세요.';
+    }
+    if (code === 'auth/popup-closed-by-user') {
+        return '로그인 창이 닫혔습니다. 다시 시도해 주세요.';
+    }
+    if (code === 'auth/network-request-failed') {
+        return '네트워크 연결 문제로 로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    }
+    return `로그인 실패: ${error?.message || '알 수 없는 오류가 발생했습니다.'}`;
 }
 
 function handleLogout() { 
@@ -524,7 +560,11 @@ window.loadTrip = function(tripId) {
 async function saveTrip() {
     if(!currentTripId) return;
     try { 
-        await updateDoc(doc(db, "trips", currentTripId), { days: currentTripData.days }); 
+        await updateDoc(doc(db, "trips", currentTripId), {
+            days: currentTripData.days,
+            checklists: currentTripData.checklists || [],
+            updatedAt: new Date().toISOString()
+        }); 
     } catch(e) { console.error(e); }
 }
 
@@ -852,6 +892,233 @@ function renderPlaceList() {
     });
 }
 
+function renderTripInsights() {
+    const dayTabs = document.getElementById('day-tabs');
+    const placesList = document.getElementById('places-list');
+    if (!dayTabs || !placesList || !currentTripData?.days?.[currentDayIndex]) return;
+
+    let panel = document.getElementById('trip-insight-panel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'trip-insight-panel';
+        panel.className = 'trip-insight-panel';
+        placesList.parentNode.insertBefore(panel, placesList);
+    }
+
+    const places = currentTripData.days[currentDayIndex].places || [];
+    const insight = analyzeCurrentDay(places);
+    panel.innerHTML = `
+        <div class="insight-head">
+            <div>
+                <span class="insight-kicker">Day ${currentDayIndex + 1} 플래너</span>
+                <h3>${insight.title}</h3>
+            </div>
+            <span class="insight-score ${insight.tone}">${insight.score}</span>
+        </div>
+        <div class="insight-metrics">
+            <div><b>${places.length}</b><span>장소</span></div>
+            <div><b>${insight.routeText}</b><span>예상 동선</span></div>
+            <div><b>${insight.mealText}</b><span>식사 균형</span></div>
+        </div>
+        <p>${insight.message}</p>
+        <div class="insight-actions">
+            <button class="btn-primary" onclick="generateSmartDraft()"><i class="fas fa-wand-magic-sparkles"></i> AI 초안</button>
+            <button class="btn-secondary" onclick="fillMealGap()"><i class="fas fa-utensils"></i> 식사 보강</button>
+        </div>
+    `;
+}
+
+function analyzeCurrentDay(places) {
+    if (!places.length) {
+        return {
+            title: '아직 비어 있는 하루',
+            score: '초안 필요',
+            tone: 'muted',
+            routeText: '-',
+            mealText: '비어 있음',
+            message: 'AI 초안으로 대표 명소, 점심, 카페, 저녁을 먼저 깔아두고 원하는 장소로 바꿔보세요.'
+        };
+    }
+
+    const totalMeters = estimateRouteMeters(places);
+    const hasLunch = places.some(p => isBetweenTime(p.time, 11, 14) && p.type === 'restaurant');
+    const hasDinner = places.some(p => isBetweenTime(p.time, 17, 21) && p.type === 'restaurant');
+    const mealText = hasLunch && hasDinner ? '좋음' : hasLunch || hasDinner ? '보통' : '부족';
+    const routeText = totalMeters ? `${(totalMeters / 1000).toFixed(1)}km` : '-';
+
+    if (places.length >= 6 || totalMeters > 18000) {
+        return {
+            title: '조금 빡빡한 일정',
+            score: '강행군',
+            tone: 'warn',
+            routeText,
+            mealText,
+            message: '장소 수나 이동 거리가 많아요. 동선 정렬을 한 번 돌리고, 멀리 떨어진 장소는 다른 날로 빼는 편이 좋겠습니다.'
+        };
+    }
+    if (!hasLunch || !hasDinner) {
+        return {
+            title: '식사 시간이 비어 있어요',
+            score: '보강 추천',
+            tone: 'info',
+            routeText,
+            mealText,
+            message: '여행 중 체력은 밥이 절반이에요. 식사 보강 버튼으로 현재 지도 근처 맛집을 바로 찾아볼 수 있습니다.'
+        };
+    }
+    return {
+        title: '균형 잡힌 하루',
+        score: '좋음',
+        tone: 'good',
+        routeText,
+        mealText,
+        message: '장소 수와 식사 구성이 적당합니다. 이동 시간이 길게 느껴지면 동선 정렬만 한 번 확인해 보세요.'
+    };
+}
+
+function estimateRouteMeters(places) {
+    if (!places || places.length < 2) return 0;
+    let total = 0;
+    for (let i = 0; i < places.length - 1; i++) {
+        const from = places[i].location;
+        const to = places[i + 1].location;
+        if (window.google?.maps?.geometry?.spherical) {
+            total += window.google.maps.geometry.spherical.computeDistanceBetween(
+                new window.google.maps.LatLng(from),
+                new window.google.maps.LatLng(to)
+            );
+        } else {
+            total += haversineMeters(from, to);
+        }
+    }
+    return total;
+}
+
+function haversineMeters(from, to) {
+    const earth = 6371000;
+    const toRad = (deg) => deg * Math.PI / 180;
+    const dLat = toRad(to.lat - from.lat);
+    const dLng = toRad(to.lng - from.lng);
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.sin(dLng / 2) ** 2;
+    return earth * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function isBetweenTime(time, startHour, endHour) {
+    if (!time) return false;
+    const hour = Number(time.split(':')[0]);
+    return hour >= startHour && hour <= endHour;
+}
+
+async function buildSmartDraft() {
+    if (!Place || !map) {
+        showError('지도가 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.');
+        return;
+    }
+
+    const destination = getPrimaryDestination();
+    const slots = [
+        { time: '09:30', query: `${destination} 대표 명소`, type: 'attraction', memo: 'AI 초안: 오전 핵심 명소' },
+        { time: '12:30', query: `${destination} 맛집`, type: 'restaurant', memo: 'AI 초안: 점심 후보' },
+        { time: '15:30', query: `${destination} 카페`, type: 'attraction', memo: 'AI 초안: 쉬어가는 시간' },
+        { time: '18:30', query: `${destination} 저녁 맛집`, type: 'restaurant', memo: 'AI 초안: 저녁 후보' }
+    ];
+
+    const existingNames = new Set(currentTripData.days[currentDayIndex].places.map(p => p.name));
+    const draftPlaces = [];
+
+    for (const slot of slots) {
+        try {
+            const { places } = await Place.searchByText({
+                textQuery: slot.query,
+                fields: ['displayName', 'formattedAddress', 'location', 'types', 'rating'],
+                locationBias: map.getCenter()
+            });
+            const picked = (places || []).find(p => !existingNames.has(p.displayName));
+            if (!picked?.location) continue;
+            existingNames.add(picked.displayName);
+            draftPlaces.push({
+                id: Date.now() + draftPlaces.length,
+                name: picked.displayName,
+                address: picked.formattedAddress || '',
+                location: { lat: picked.location.lat(), lng: picked.location.lng() },
+                type: slot.type,
+                time: slot.time,
+                memo: slot.memo,
+                cost: 0
+            });
+        } catch (e) {
+            console.warn('Draft search failed:', slot.query, e);
+        }
+    }
+
+    if (!draftPlaces.length) {
+        showError('초안으로 넣을 장소를 찾지 못했습니다. 지도 위치를 여행지 근처로 옮긴 뒤 다시 시도해 주세요.');
+        return;
+    }
+
+    currentTripData.days[currentDayIndex].places.push(...draftPlaces);
+    currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    await saveTrip();
+    renderTripInsights();
+    renderPlaceList();
+    renderMap();
+    showSuccess(`${draftPlaces.length}개의 일정 초안을 추가했습니다.`);
+}
+
+window.generateSmartDraft = function() {
+    const places = currentTripData.days[currentDayIndex].places || [];
+    if (places.length > 0) {
+        showConfirm('현재 일정 뒤에 AI 초안을 추가할까요?', buildSmartDraft);
+    } else {
+        buildSmartDraft();
+    }
+};
+
+window.fillMealGap = async function() {
+    if (!Place || !map) return showError('지도가 아직 준비되지 않았습니다.');
+    const places = currentTripData.days[currentDayIndex].places || [];
+    const needLunch = !places.some(p => isBetweenTime(p.time, 11, 14) && p.type === 'restaurant');
+    const targetTime = needLunch ? '12:30' : '18:30';
+    const destination = getPrimaryDestination();
+
+    try {
+        const { places: results } = await Place.searchByText({
+            textQuery: `${destination} ${needLunch ? '점심 맛집' : '저녁 맛집'}`,
+            fields: ['displayName', 'formattedAddress', 'location', 'types', 'rating'],
+            locationBias: map.getCenter()
+        });
+        const picked = (results || []).find(p => p?.location);
+        if (!picked) return showError('추천할 식당을 찾지 못했습니다.');
+
+        currentTripData.days[currentDayIndex].places.push({
+            id: Date.now(),
+            name: picked.displayName,
+            address: picked.formattedAddress || '',
+            location: { lat: picked.location.lat(), lng: picked.location.lng() },
+            type: 'restaurant',
+            time: targetTime,
+            memo: `AI 초안: ${needLunch ? '점심' : '저녁'} 후보`,
+            cost: 0
+        });
+        currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        await saveTrip();
+        renderTripInsights();
+        renderPlaceList();
+        renderMap();
+        showSuccess(`${needLunch ? '점심' : '저녁'} 후보를 추가했습니다.`);
+    } catch (e) {
+        showError('식사 후보 검색 실패: ' + e.message);
+    }
+};
+
+function getPrimaryDestination() {
+    return (currentTripData?.destination || '여행지')
+        .split(' / ')[0]
+        .replace(/\([^)]*\)/g, '')
+        .trim();
+}
+
 let searchTimer;
 function handlePlaceSearch(e) {
     clearTimeout(searchTimer);
@@ -1020,7 +1287,7 @@ function renderDayTabs() {
         c.appendChild(b);
     });
 }
-function selectDay(idx) { currentDayIndex = idx; renderDayTabs(); renderPlaceList(); renderMap(); }
+function selectDay(idx) { currentDayIndex = idx; renderDayTabs(); renderTripInsights(); renderPlaceList(); renderMap(); }
 
 async function renderMembers() {
     const list = document.getElementById('member-list');
