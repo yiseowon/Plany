@@ -1,4 +1,5 @@
 const CONFIG = {
+    PUBLIC_URL: "https://www.plany.life/",
     GOOGLE_API_KEY: "AIzaSyA7YAQTsCKXdRbOPa3xEFlZIjNlCF75vo0",
     FIREBASE: {
         apiKey: "AIzaSyD7T4qD7V5756k_1C6k4pYGn6Q_E1EDa7A",

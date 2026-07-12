@@ -173,6 +173,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     addListener('trip-settings-form', 'submit', updateTripSettings);
     addListener('btn-delete-trip', 'click', deleteTrip);
 
+    linkDateRange('start-date', 'end-date');
+    linkDateRange('setting-start-date', 'setting-end-date');
+
     initLocationSelectors();
     setPersistence(auth, browserLocalPersistence).catch((e) => console.warn('Auth persistence setup failed:', e));
     getRedirectResult(auth).catch((e) => showError(formatAuthError(e)));
@@ -201,6 +204,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 });
+
+function linkDateRange(startId, endId) {
+    const startInput = document.getElementById(startId);
+    const endInput = document.getElementById(endId);
+    if (!startInput || !endInput) return;
+
+    startInput.addEventListener('change', () => {
+        endInput.min = startInput.value;
+        if (endInput.value && endInput.value < startInput.value) {
+            endInput.value = startInput.value;
+        }
+    });
+}
+
+function getTripDateRange(startId, endId) {
+    const start = document.getElementById(startId).value;
+    const end = document.getElementById(endId).value;
+    if (!start || !end || end < start) {
+        showError("도착일은 출발일과 같거나 이후여야 합니다.");
+        return null;
+    }
+    return { start, end };
+}
 
 function initLocationSelectors() {
     const countrySelect = document.getElementById('select-country');
@@ -401,13 +427,24 @@ function updateDashboardProfile(data) {
 }
 
 async function joinTrip(tripId) {
+    if (!tripId || !/^[a-zA-Z0-9_-]+$/.test(tripId)) {
+        showError("초대 링크가 올바르지 않습니다. 링크 전체를 다시 받아주세요.");
+        return;
+    }
     const tripRef = doc(db, "trips", tripId);
     try {
         await updateDoc(tripRef, { members: arrayUnion(currentUser.email) });
         loadTrip(tripId);
         showSuccess("여행에 참여했습니다!");
     } catch(e) {
-        showError("여행 참여 실패 (존재하지 않거나 권한 없음)");
+        console.error("Trip invitation failed:", e);
+        if (e?.code === 'not-found') {
+            showError("여행을 찾을 수 없습니다. 초대 링크가 만료되었거나 여행이 삭제되었어요.");
+        } else if (e?.code === 'permission-denied') {
+            showError("초대 권한을 확인하지 못했습니다. 잠시 후 링크를 다시 열어주세요.");
+        } else {
+            showError("여행 참여 중 문제가 생겼습니다. 네트워크를 확인한 뒤 다시 시도해주세요.");
+        }
     }
 }
 
@@ -464,8 +501,9 @@ async function createNewTrip(e) {
     }
     const dest = tempDestinations.join(' / ');
 
-    const start = document.getElementById('start-date').value;
-    const end = document.getElementById('end-date').value;
+    const dateRange = getTripDateRange('start-date', 'end-date');
+    if (!dateRange) return;
+    const { start, end } = dateRange;
     const sDate = new Date(start); const eDate = new Date(end);
     const daysCount = (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
     const days = Array.from({length: daysCount}, (_, i) => ({ day: i + 1, places: [] }));
@@ -492,6 +530,7 @@ window.openTripSettings = async function(tripId) {
         document.getElementById('setting-title').value = data.title;
         document.getElementById('setting-start-date').value = data.startDate;
         document.getElementById('setting-end-date').value = data.endDate;
+        document.getElementById('setting-end-date').min = data.startDate;
         openModal('trip-settings-modal');
     }
 }
@@ -500,8 +539,9 @@ async function updateTripSettings(e) {
     e.preventDefault();
     const tripId = document.getElementById('setting-trip-id').value;
     const title = document.getElementById('setting-title').value;
-    const start = document.getElementById('setting-start-date').value;
-    const end = document.getElementById('setting-end-date').value;
+    const dateRange = getTripDateRange('setting-start-date', 'setting-end-date');
+    if (!dateRange) return;
+    const { start, end } = dateRange;
     
     const tripRef = doc(db, "trips", tripId);
     const snap = await getDoc(tripRef);
@@ -539,7 +579,9 @@ window.loadTrip = function(tripId) {
     currentTripId = tripId;
     showScreen('planner-screen');
     
-    const inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${tripId}`;
+    const publicUrl = new URL(CONFIG.PUBLIC_URL || window.location.origin);
+    publicUrl.searchParams.set('invite', tripId);
+    const inviteUrl = publicUrl.toString();
     const inviteInput = document.getElementById('invite-link');
     if(inviteInput) inviteInput.value = inviteUrl;
 
@@ -1641,7 +1683,18 @@ window.deleteChecklistItem = function(listIdx, itemIdx) {
     currentTripData.checklists[listIdx].items.splice(itemIdx, 1);
     saveTrip(); renderChecklists();
 };
-function copyInviteLink() { const copyText = document.getElementById("invite-link"); copyText.select(); navigator.clipboard.writeText(copyText.value).then(() => { showSuccess("링크 복사 완료!"); }); }
+async function copyInviteLink() {
+    const copyText = document.getElementById("invite-link");
+    if (!copyText?.value) return showError("초대 링크를 아직 만들지 못했습니다.");
+    try {
+        await navigator.clipboard.writeText(copyText.value);
+    } catch {
+        copyText.focus();
+        copyText.select();
+        document.execCommand('copy');
+    }
+    showSuccess("초대 링크를 복사했습니다!");
+}
 function redirectToBooking() { const places = currentTripData.days[currentDayIndex].places; if (places.length === 0) return; const lastPlace = places[places.length - 1]; const query = encodeURIComponent(`${currentTripData.destination} ${lastPlace.name} ticket`); window.open(`https://www.google.com/search?q=${query}`, '_blank'); }
 
 function openModal(id) { document.getElementById(id).classList.add('active'); }

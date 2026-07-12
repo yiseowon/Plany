@@ -13,6 +13,7 @@
 
     <div id="login-screen" class="screen active">
         <div class="center-box">
+            <div class="app-mark"><i class="fas fa-location-dot"></i></div>
             <h1>Plany</h1>
             <p>친구와 함께 만드는 스마트한 여행</p>
             <button id="google-login-btn" class="btn-google">
@@ -104,12 +105,13 @@
             <div id="tab-social" class="tab-content">
                 <h3>여행 멤버</h3>
                 <div id="member-list" class="member-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; padding:15px 0;"></div>
-                <div class="invite-card" style="background:#4dabf7; color:white; padding:20px; border-radius:16px; margin-top:20px; text-align:center;">
-                    <h4>💌 친구 초대하기</h4>
-                    <p style="opacity:0.9; margin:10px 0; font-size:0.9em;">링크를 복사해서 공유하세요.</p>
-                    <div style="background:rgba(255,255,255,0.2); padding:8px; border-radius:10px; display:flex; align-items:center;">
-                        <input type="text" id="invite-link" readonly style="background:transparent; border:none; color:white; flex:1; outline:none; padding:0 10px;">
-                        <button id="copy-link-btn" style="background:white; color:#4dabf7; border-radius:8px; width:36px; height:36px; display:flex; justify-content:center; align-items:center;"><i class="far fa-copy"></i></button>
+                <div class="invite-card">
+                    <div class="invite-icon"><i class="fas fa-user-plus"></i></div>
+                    <h4>친구 초대하기</h4>
+                    <p>링크를 받은 친구는 로그인 후 바로 참여할 수 있어요.</p>
+                    <div class="invite-action">
+                        <input type="text" id="invite-link" readonly aria-label="초대 링크">
+                        <button id="copy-link-btn" aria-label="초대 링크 복사"><i class="far fa-copy"></i></button>
                     </div>
                 </div>
             </div>
@@ -119,25 +121,25 @@
 
 
     <div id="setup-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content trip-form-modal">
             <span class="close-modal" onclick="closeModal('setup-modal')">&times;</span>
-            <h2>새 여행 만들기</h2>
+            <div class="modal-heading"><span class="modal-symbol"><i class="fas fa-suitcase-rolling"></i></span><div><h2>새 여행 만들기</h2><p>여행의 기본 정보를 입력해주세요.</p></div></div>
             <form id="trip-form">
                 <div class="form-group">
-                    <label>여행 제목</label>
+                    <label><i class="fas fa-pen"></i> 여행 제목</label>
                     <input type="text" id="trip-title-input" class="form-input" placeholder="예: 오사카 먹방 투어" required>
                 </div>
                 
                 <div class="form-group">
-                    <label>여행지 선택 (복수 선택 가능)</label>
-                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-                        <select id="select-country" class="form-input" style="flex:1;">
+                    <label><i class="fas fa-map-marker-alt"></i> 여행지 <span class="label-note">복수 선택 가능</span></label>
+                    <div class="destination-picker">
+                        <select id="select-country" class="form-input">
                             <option value="">국가 선택</option>
                             </select>
-                        <select id="select-region" class="form-input" style="flex:1;" disabled>
+                        <select id="select-region" class="form-input" disabled>
                             <option value="">지역 선택</option>
                         </select>
-                        <button type="button" id="btn-add-region" class="btn-secondary" style="width: auto; padding: 0 15px;">
+                        <button type="button" id="btn-add-region" class="btn-add-region" aria-label="여행지 추가">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
@@ -146,10 +148,11 @@
 
 
                 <div class="form-group">
-                    <label>기간</label>
+                    <label><i class="far fa-calendar"></i> 여행 기간</label>
                     <div class="date-row">
-                        <input type="date" id="start-date" class="form-input" required>
-                        <input type="date" id="end-date" class="form-input" required>
+                        <div class="date-field"><span>출발</span><input type="date" id="start-date" class="form-input" required></div>
+                        <i class="fas fa-arrow-right date-arrow"></i>
+                        <div class="date-field"><span>도착</span><input type="date" id="end-date" class="form-input" required></div>
                     </div>
                 </div>
                 <button type="submit" class="btn-primary full-width">생성하기</button>
@@ -159,16 +162,16 @@
 
 
     <div id="trip-settings-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content trip-form-modal">
             <span class="close-modal" onclick="closeModal('trip-settings-modal')">&times;</span>
-            <h2>여행 설정</h2>
+            <div class="modal-heading"><span class="modal-symbol"><i class="fas fa-sliders"></i></span><div><h2>여행 설정</h2><p>제목과 일정을 편집할 수 있어요.</p></div></div>
             <form id="trip-settings-form">
                 <input type="hidden" id="setting-trip-id">
-                <div class="form-group"><label>여행 제목</label><input type="text" id="setting-title" class="form-input" required></div>
-                <div class="form-group"><label>기간</label><div class="date-row"><input type="date" id="setting-start-date" class="form-input" required><input type="date" id="setting-end-date" class="form-input" required></div></div>
-                <p style="color:#fa5252; font-size:0.85em; margin-bottom:15px;">※ 기간을 줄이면 해당 일자의 일정이 삭제될 수 있습니다.</p>
-                <div style="display:flex; gap:10px;">
-                    <button type="button" id="btn-delete-trip" class="btn-secondary full-width" style="background:#ffc9c9; color:#fa5252; border:none;">삭제</button>
+                <div class="form-group"><label><i class="fas fa-pen"></i> 여행 제목</label><input type="text" id="setting-title" class="form-input" required></div>
+                <div class="form-group"><label><i class="far fa-calendar"></i> 여행 기간</label><div class="date-row"><div class="date-field"><span>출발</span><input type="date" id="setting-start-date" class="form-input" required></div><i class="fas fa-arrow-right date-arrow"></i><div class="date-field"><span>도착</span><input type="date" id="setting-end-date" class="form-input" required></div></div></div>
+                <p class="form-warning"><i class="fas fa-circle-info"></i> 기간을 줄이면 제외되는 날짜의 일정이 삭제될 수 있어요.</p>
+                <div class="modal-actions">
+                    <button type="button" id="btn-delete-trip" class="btn-danger-soft full-width">여행 삭제</button>
                     <button type="submit" class="btn-primary full-width">저장</button>
                 </div>
             </form>

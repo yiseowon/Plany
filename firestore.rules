@@ -18,6 +18,15 @@ service cloud.firestore {
       return signedIn() && email() in request.resource.data.members;
     }
 
+    function isJoiningSelf() {
+      return signedIn()
+        && !(email() in resource.data.members)
+        && email() in request.resource.data.members
+        && request.resource.data.members.hasAll(resource.data.members)
+        && request.resource.data.members.size() == resource.data.members.size() + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']);
+    }
+
     match /users/{userId} {
       allow read: if signedIn();
       allow create, update: if signedIn() && request.auth.uid == userId;
@@ -28,7 +37,7 @@ service cloud.firestore {
       allow read: if isTripMember();
       allow create: if willBeTripMember()
         && request.resource.data.owner == email();
-      allow update: if isTripMember() && willBeTripMember();
+      allow update: if (isTripMember() && willBeTripMember()) || isJoiningSelf();
       allow delete: if signedIn() && resource.data.owner == email();
     }
   }
