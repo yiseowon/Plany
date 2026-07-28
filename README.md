@@ -8,6 +8,7 @@
 - Authentication / Firestore: Firebase project `maps-5fe2c`
 - Google Maps Platform: Google Cloud project `maps-481116`
 - Current source version: `1.2.0`
+- Patch notes: [`docs/PATCH_NOTES_1.2.0.md`](docs/PATCH_NOTES_1.2.0.md)
 
 ## 로컬 확인
 
