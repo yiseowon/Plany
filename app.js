@@ -22,10 +22,19 @@ import {
     deleteDoc, 
     onSnapshot, 
     query, 
-    where, 
+    where,
     arrayUnion,
-    arrayRemove 
+    arrayRemove,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+    APP_VERSION,
+    escapeHTML,
+    normalizeText,
+    safeImageUrl,
+    validateTripDateRange,
+    validateTripDraft
+} from "./js/core.js";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -45,6 +54,8 @@ let currentDayIndex = 0;
 let currentEditPlaceId = null;
 let tempPlaceData = null;
 let sortableInstance = null;
+let unsubscribeTrips = null;
+let unsubscribeCurrentTrip = null;
 
 let mapMarkers = [];
 let mapPolylines = [];
@@ -144,6 +155,8 @@ function showError(msg) { showPopup("오류", msg, "fas fa-exclamation-circle");
 function showConfirm(msg, callback) { showPopup("확인", msg, "fas fa-question-circle", true, callback); }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const versionEl = document.getElementById('app-version');
+    if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
     
     const addListener = (id, event, handler) => {
         const el = document.getElementById(id);
@@ -199,6 +212,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadUserTrips();
             if(!map) initMapLibrary();
         } else {
+            unsubscribeTrips?.();
+            unsubscribeCurrentTrip?.();
+            unsubscribeTrips = null;
+            unsubscribeCurrentTrip = null;
             currentUser = null;
             showScreen('login-screen');
         }
@@ -221,11 +238,12 @@ function linkDateRange(startId, endId) {
 function getTripDateRange(startId, endId) {
     const start = document.getElementById(startId).value;
     const end = document.getElementById(endId).value;
-    if (!start || !end || end < start) {
-        showError("도착일은 출발일과 같거나 이후여야 합니다.");
+    const result = validateTripDateRange(start, end);
+    if (!result.ok) {
+        showError(result.error);
         return null;
     }
-    return { start, end };
+    return { start: result.start, end: result.end, daysCount: result.daysCount };
 }
 
 function initLocationSelectors() {
@@ -283,7 +301,14 @@ function renderDestinationTags() {
     tempDestinations.forEach((dest, index) => {
         const tag = document.createElement('div');
         tag.className = 'location-tag';
-        tag.innerHTML = `<span>${dest}</span> <i class="fas fa-times" onclick="removeDestinationTag(${index})"></i>`;
+        const label = document.createElement('span');
+        label.textContent = dest;
+        const removeIcon = document.createElement('i');
+        removeIcon.className = 'fas fa-times';
+        removeIcon.setAttribute('role', 'button');
+        removeIcon.setAttribute('aria-label', `${dest} 삭제`);
+        removeIcon.addEventListener('click', () => window.removeDestinationTag(index));
+        tag.append(label, ' ', removeIcon);
         container.appendChild(tag);
     });
 }
@@ -335,10 +360,16 @@ function formatAuthError(error) {
     return `로그인 실패: ${error?.message || '알 수 없는 오류가 발생했습니다.'}`;
 }
 
-function handleLogout() { 
-    showConfirm("정말 로그아웃 하시겠습니까?", () => { 
-        signOut(auth); 
-        window.location.reload(); 
+function handleLogout() {
+    showConfirm("정말 로그아웃 하시겠습니까?", () => {
+        unsubscribeTrips?.();
+        unsubscribeCurrentTrip?.();
+        unsubscribeTrips = null;
+        unsubscribeCurrentTrip = null;
+        currentTripId = null;
+        currentTripData = null;
+        signOut(auth);
+        window.location.reload();
     }); 
 }
 
@@ -406,7 +437,8 @@ function updateDashboardProfile(data) {
     if (!container) return;
 
     const fallbackImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLtMS43OS00LTQtNC00IDEuNzktNCA0IDEuNzkgNCA0IDR6bTAgMmMtMi42NyAwLTggMS4zNC04IDR2MmgxNnYtMmMwLTIuNjYtNS4zMy00LTgtNHoiLz48L3N2Zz4=';
-    const imgSrc = data.photoURL || fallbackImg;
+    const imgSrc = safeImageUrl(data.photoURL, fallbackImg);
+    const displayName = escapeHTML(normalizeText(data.displayName) || '여행자');
 
     // ✨ 변경된 부분: 
     // 1. <div>로 감싸서 cursor:pointer (손가락 모양) 추가
@@ -414,7 +446,7 @@ function updateDashboardProfile(data) {
     container.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px; cursor:pointer;" onclick="openProfileEdit()">
             <img src="${imgSrc}" class="user-avatar-small" onerror="this.src='${fallbackImg}'">
-            <span class="user-name">${data.displayName}님</span>
+            <span class="user-name">${displayName}님</span>
         </div>
         <button id="logout-btn-dash" class="btn-icon" style="margin-left:10px;"><i class="fas fa-sign-out-alt"></i></button>
     `;
@@ -450,7 +482,8 @@ async function joinTrip(tripId) {
 
 function loadUserTrips() {
     const q = query(collection(db, "trips"), where("members", "array-contains", currentUser.email));
-    onSnapshot(q, (snapshot) => {
+    unsubscribeTrips?.();
+    unsubscribeTrips = onSnapshot(q, (snapshot) => {
         const listEl = document.getElementById('trip-list');
         if (!listEl) return;
         
@@ -465,8 +498,8 @@ function loadUserTrips() {
             div.className = 'trip-card';
             div.innerHTML = `
                 <div class="trip-info">
-                    <h3>${trip.title}</h3>
-                    <p style="color:#868e96; margin-top:5px;">${trip.destination} | ${trip.startDate}</p>
+                    <h3>${escapeHTML(trip.title)}</h3>
+                    <p style="color:#868e96; margin-top:5px;">${escapeHTML(trip.destination)} | ${escapeHTML(trip.startDate)}</p>
                 </div>
                 <div class="trip-actions">
                     <button class="btn-setting" onclick="window.openTripSettings('${docSnap.id}')"><i class="fas fa-cog"></i></button>
@@ -494,23 +527,22 @@ function formatFirebaseDataError(error) {
 
 async function createNewTrip(e) {
     e.preventDefault();
-    const title = document.getElementById('trip-title-input').value;
+    const title = normalizeText(document.getElementById('trip-title-input').value);
     
     if (tempDestinations.length === 0) {
         return showError("최소 한 곳 이상의 여행지를 추가해주세요.");
     }
-    const dest = tempDestinations.join(' / ');
-
     const dateRange = getTripDateRange('start-date', 'end-date');
     if (!dateRange) return;
-    const { start, end } = dateRange;
-    const sDate = new Date(start); const eDate = new Date(end);
-    const daysCount = (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
+    const draft = validateTripDraft({ title, destinations: tempDestinations, ...dateRange });
+    if (!draft.ok) return showError(draft.error);
+    const { title: cleanTitle, destination: cleanDestination, start, end, daysCount } = draft;
     const days = Array.from({length: daysCount}, (_, i) => ({ day: i + 1, places: [] }));
 
     const newTrip = {
-        title, destination: dest, startDate: start, endDate: end,
-        owner: currentUser.email, members: [currentUser.email], days: days
+        title: cleanTitle, destination: cleanDestination, startDate: start, endDate: end,
+        owner: currentUser.email, members: [currentUser.email], days,
+        schemaVersion: 2, createdAt: serverTimestamp(), updatedAt: serverTimestamp()
     };
 
     try {
@@ -538,18 +570,21 @@ window.openTripSettings = async function(tripId) {
 async function updateTripSettings(e) {
     e.preventDefault();
     const tripId = document.getElementById('setting-trip-id').value;
-    const title = document.getElementById('setting-title').value;
+    const title = normalizeText(document.getElementById('setting-title').value);
     const dateRange = getTripDateRange('setting-start-date', 'setting-end-date');
     if (!dateRange) return;
-    const { start, end } = dateRange;
-    
     const tripRef = doc(db, "trips", tripId);
     const snap = await getDoc(tripRef);
-    let days = snap.data().days;
-    
-    const sDate = new Date(start); 
-    const eDate = new Date(end);
-    const newCount = (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
+    if (!snap.exists()) return showError('수정할 여행을 찾을 수 없습니다.');
+
+    const validation = validateTripDraft({
+        title,
+        destinations: String(snap.data().destination || '').split(' / '),
+        ...dateRange
+    });
+    if (!validation.ok) return showError(validation.error);
+    const { start, end, daysCount: newCount } = validation;
+    let days = Array.isArray(snap.data().days) ? [...snap.data().days] : [];
     
     if(newCount > days.length) {
         for(let i=days.length; i<newCount; i++) days.push({day: i+1, places: []});
@@ -558,7 +593,7 @@ async function updateTripSettings(e) {
     }
 
     try {
-        await updateDoc(tripRef, { title, startDate: start, endDate: end, days });
+        await updateDoc(tripRef, { title, startDate: start, endDate: end, days, updatedAt: serverTimestamp() });
         closeModal('trip-settings-modal');
         showSuccess("여행 정보가 수정되었습니다.");
     } catch(e) { showError("수정 실패"); }
@@ -585,10 +620,11 @@ window.loadTrip = function(tripId) {
     const inviteInput = document.getElementById('invite-link');
     if(inviteInput) inviteInput.value = inviteUrl;
 
-    // async 키워드 추가됨
-    onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
+    unsubscribeCurrentTrip?.();
+    unsubscribeCurrentTrip = onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
         if (!docSnap.exists()) { showScreen('dashboard-screen'); return; }
         currentTripData = docSnap.data();
+        centerMapOnTrip();
         
         // 프로필 정보 가져오기 (닉네임 표시용)
         await fetchMemberProfiles();
@@ -607,27 +643,30 @@ window.loadTrip = function(tripId) {
         
         if(currentDayIndex >= currentTripData.days.length) currentDayIndex = 0;
         selectDay(currentDayIndex);
+    }, (error) => {
+        console.error(error);
+        showError(formatFirebaseDataError(error));
     });
-
-    if(map && currentTripData) {
-        // 데이터에 목적지가 있다면 지도의 중심으로 잡기
-        const firstDest = currentTripData.destination ? currentTripData.destination.split(' / ')[0] : "Japan";
-        new google.maps.Geocoder().geocode({address: firstDest}, (res, status)=>{
-            if(status === 'OK') {
-                const loc = res[0].geometry.location;
-                map.setCenter(loc);
-                fetchWeather(loc.lat(), loc.lng(), firstDest);
-            }
-        });
-    }
 }
+
+function centerMapOnTrip() {
+    if (!map || !currentTripData || !window.google?.maps?.Geocoder) return;
+    const firstDest = currentTripData.destination?.split(' / ')[0] || 'Japan';
+    new google.maps.Geocoder().geocode({ address: firstDest }, (results, status) => {
+        if (status !== 'OK' || !results?.[0]) return;
+        const location = results[0].geometry.location;
+        map.setCenter(location);
+        fetchWeather(location.lat(), location.lng(), firstDest);
+    });
+}
+
 async function saveTrip() {
     if(!currentTripId) return;
     try { 
         await updateDoc(doc(db, "trips", currentTripId), {
             days: currentTripData.days,
             checklists: currentTripData.checklists || [],
-            updatedAt: new Date().toISOString()
+            updatedAt: serverTimestamp()
         }); 
     } catch(e) { console.error(e); }
 }
@@ -655,6 +694,7 @@ async function initMapLibrary() {
                 disableDefaultUI: true,
                 gestureHandling: "greedy"
             });
+            centerMapOnTrip();
         }
     } catch (e) {
         console.error("지도 로드 실패:", e);
@@ -783,21 +823,29 @@ function getPolylineMidpoint(path) {
     return path[Math.floor(path.length / 2)];
 }
 
-//function createRouteButton(position, origin, destination) {
-//    if(!position) return;
-//    const btnDiv = document.createElement('div');
-//    btnDiv.className = 'route-info-marker';
-//    btnDiv.innerHTML = `INFO <i class="fas fa-info-circle"></i>`;
-//    btnDiv.addEventListener('click', (e) => { 
-//        e.stopPropagation(); 
-//        showRouteDetailModal(origin, destination); 
-//    });
-//    const infoMarker = new AdvancedMarkerElement({
-//        map, position: position, content: btnDiv, title: "정보 확인"
-//    });
-//    mapRouteMarkers.push(infoMarker);
-//}
-//
+function createRouteButton(position, origin, destination) {
+    if (!position || !AdvancedMarkerElement) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'route-info-marker';
+    button.setAttribute('aria-label', '이동 경로 정보 보기');
+    button.append('INFO ');
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-info-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    button.appendChild(icon);
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        showRouteDetailModal(origin, destination);
+    });
+    const infoMarker = new AdvancedMarkerElement({
+        map,
+        position,
+        content: button,
+        title: '경로 정보 확인'
+    });
+    mapRouteMarkers.push(infoMarker);
+}
 
 function showRouteDetailModal(origin, dest) {
     const container = document.getElementById('route-comparison');
@@ -907,14 +955,18 @@ function renderPlaceList() {
 
         // 메모가 있을 때만 meta 영역 표시 (비용은 이제 체크 안 함)
         const hasMeta = !!place.memo;
+        const safeType = ['food', 'sight', 'hotel', 'transport', 'shopping'].includes(place.type) ? place.type : 'sight';
+        const safeName = escapeHTML(place.name);
+        const safeTime = escapeHTML(place.time || '--:--');
+        const safeMemo = escapeHTML(place.memo);
         
         div.innerHTML = `
-            <div class="place-marker-icon ${place.type}">${idx+1}</div>
+            <div class="place-marker-icon ${safeType}">${idx+1}</div>
             <div class="place-content">
                 <div class="place-header">
-                    <span class="place-title">${place.name}</span>
+                    <span class="place-title">${safeName}</span>
                     <div class="place-right-group">
-                        <span class="place-time-badge">${place.time||'--:--'}</span>
+                        <span class="place-time-badge">${safeTime}</span>
                         <div class="place-actions">
                             <button class="btn-action-large" onclick="openEditPlaceModal(${place.id})"><i class="fas fa-edit"></i></button>
                             <button class="btn-action-large delete" style="color:#fa5252;" onclick="removePlace(${place.id})"><i class="fas fa-trash"></i></button>
@@ -923,7 +975,7 @@ function renderPlaceList() {
                 </div>
 
                 <div class="place-meta ${hasMeta?'has-content':''}">
-                    ${place.memo ? `<i class="far fa-sticky-note"></i> ${place.memo}` : ''} 
+                    ${place.memo ? `<i class="far fa-sticky-note"></i> ${safeMemo}` : ''}
                 </div>
 
                 <div class="place-footer-actions">
@@ -1207,7 +1259,7 @@ function handlePlaceSearch(e) {
             places.slice(0, 5).forEach(p => {
                 const div = document.createElement('div');
                 div.className = 'result-item';
-                div.innerHTML = `<b>${p.displayName}</b><br><small>${p.formattedAddress}</small>`;
+                div.innerHTML = `<b>${escapeHTML(p.displayName)}</b><br><small>${escapeHTML(p.formattedAddress)}</small>`;
                 div.onclick = () => { initiateAddPlace({ displayName: p.displayName, formattedAddress: p.formattedAddress, location: p.location, types: p.types }); };
                 resList.appendChild(div);
             });
@@ -1299,9 +1351,9 @@ async function recommendNearbyPlaces() {
                 div.className = 'rec-item'; 
                 const ratingStr = p.rating ? `⭐ ${p.rating}` : '평점 없음'; 
                 div.innerHTML = `
-                    <div style="font-weight:bold; font-size:1.05em;">${p.displayName}</div>
+                    <div style="font-weight:bold; font-size:1.05em;">${escapeHTML(p.displayName)}</div>
                     <div style="color:#fcc419; font-size:0.9em; margin:2px 0;">${ratingStr}</div>
-                    <div style="color:#868e96; font-size:0.85em;">${p.formattedAddress}</div>
+                    <div style="color:#868e96; font-size:0.85em;">${escapeHTML(p.formattedAddress)}</div>
                 `;
                 div.onclick = () => { 
                     initiateAddPlace({ 
@@ -1379,10 +1431,10 @@ async function renderMembers() {
             list.innerHTML += `
                 <div class="member-item" style="position:relative;">
                     <div style="position:relative; display:inline-block;">
-                        <img src="${user.photoURL}" class="member-avatar">
+                        <img src="${safeImageUrl(user.photoURL)}" class="member-avatar">
                         ${deleteBtn}
                     </div>
-                    <div class="member-name">${user.displayName}</div>
+                    <div class="member-name">${escapeHTML(user.displayName)}</div>
                 </div>`;
         });
     } catch(e) {
@@ -1504,7 +1556,7 @@ function renderBudget() {
 
         l.innerHTML += `
             <div class="settlement-card">
-                <span style="font-weight:600;"><i class="fas fa-user"></i> ${name}</span>
+                <span style="font-weight:600;"><i class="fas fa-user"></i> ${escapeHTML(name)}</span>
                 <span style="color:#339af0; font-weight:bold;">${Math.round(cost).toLocaleString()}원</span>
             </div>
         `;
@@ -1536,7 +1588,7 @@ function renderBudget() {
                         }).join(', ');
 
                         return `<div style="font-size:0.85em; color:#868e96; display:flex; justify-content:space-between;">
-                            <span>- ${item.name} (${memberNames})</span>
+                            <span>- ${escapeHTML(item.name)} (${escapeHTML(memberNames)})</span>
                             <span>${item.price.toLocaleString()}원</span>
                         </div>`;
                     }).join('');
@@ -1545,7 +1597,7 @@ function renderBudget() {
                 l.innerHTML += `
                     <div style="padding:12px 0; border-bottom:1px solid #eee;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                            <span style="font-weight:600;">${p.name}</span>
+                            <span style="font-weight:600;">${escapeHTML(p.name)}</span>
                             <span style="font-weight:700;">${displayCost.toLocaleString()}원</span>
                         </div>
                         ${detailsHtml}
@@ -1565,7 +1617,7 @@ async function fetchWeather(lat, lon, name) {
         const wData = await weatherRes.json(); 
         const current = wData.list[0]; 
         const iconUrl = `https://openweathermap.org/img/wn/${current.weather[0].icon}@2x.png`; 
-        widget.innerHTML = `<div class="weather-icon"><img src="${iconUrl}" alt="weather" style="width:50px;"></div><div class="weather-info"><div class="weather-main" style="font-weight:bold;">${name}</div><div class="weather-desc" style="font-size:0.9em;">${current.main.temp.toFixed(1)}°C, ${current.weather[0].description}</div></div>`; 
+        widget.innerHTML = `<div class="weather-icon"><img src="${safeImageUrl(iconUrl)}" alt="weather" style="width:50px;"></div><div class="weather-info"><div class="weather-main" style="font-weight:bold;">${escapeHTML(name)}</div><div class="weather-desc" style="font-size:0.9em;">${current.main.temp.toFixed(1)}°C, ${escapeHTML(current.weather[0].description)}</div></div>`;
     } catch (e) { console.warn(e); } 
 }
 
@@ -1635,7 +1687,7 @@ function renderChecklists() {
         div.className = 'checklist-card';
         div.innerHTML = `
             <div class="checklist-header">
-                <input type="text" class="checklist-title" value="${list.title}" onchange="updateChecklistTitle(${listIdx}, this.value)">
+                <input type="text" class="checklist-title" value="${escapeHTML(list.title)}" onchange="updateChecklistTitle(${listIdx}, this.value)">
                 <button class="btn-icon" style="color:#fa5252" onclick="deleteChecklist(${listIdx})"><i class="fas fa-trash-alt"></i></button>
             </div>
             <div id="cl-items-${listIdx}"></div>
@@ -1651,7 +1703,7 @@ function renderChecklists() {
             itemContainer.innerHTML += `
                 <div class="checklist-item ${item.checked ? 'checked' : ''}">
                     <input type="checkbox" class="checklist-checkbox" ${item.checked ? 'checked' : ''} onchange="toggleChecklistItem(${listIdx}, ${itemIdx})">
-                    <span style="flex:1;">${item.text}</span>
+                    <span style="flex:1;">${escapeHTML(item.text)}</span>
                     <i class="fas fa-times" style="cursor:pointer; color:#dee2e6;" onclick="deleteChecklistItem(${listIdx}, ${itemIdx})"></i>
                 </div>
             `;
@@ -1714,7 +1766,7 @@ function renderNewItemMemberSelect() {
         
         const chip = document.createElement('div');
         chip.className = 'member-select-chip selected'; 
-        chip.innerHTML = `${name}`; // 닉네임 표시
+        chip.textContent = name;
         chip.dataset.email = email;
         chip.onclick = () => chip.classList.toggle('selected');
         container.appendChild(chip);
@@ -1766,8 +1818,8 @@ function renderExpenseBuffer() {
         list.innerHTML += `
             <div class="expense-item-row">
                 <div>
-                    <div class="expense-info"><b>${item.name}</b> : ${item.price.toLocaleString()}원</div>
-                    <div class="expense-members"><i class="fas fa-user-friends"></i> ${memberNames}</div>
+                    <div class="expense-info"><b>${escapeHTML(item.name)}</b> : ${item.price.toLocaleString()}원</div>
+                    <div class="expense-members"><i class="fas fa-user-friends"></i> ${escapeHTML(memberNames)}</div>
                 </div>
                 <button class="btn-icon" style="color:#fa5252" onclick="removeExpenseItemFromBuffer(${idx})">
                     <i class="fas fa-times"></i>
