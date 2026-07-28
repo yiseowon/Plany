@@ -56,6 +56,7 @@ let tempPlaceData = null;
 let sortableInstance = null;
 let unsubscribeTrips = null;
 let unsubscribeCurrentTrip = null;
+let lastCenteredTripKey = null;
 
 let mapMarkers = [];
 let mapPolylines = [];
@@ -368,6 +369,7 @@ function handleLogout() {
         unsubscribeCurrentTrip = null;
         currentTripId = null;
         currentTripData = null;
+        lastCenteredTripKey = null;
         signOut(auth);
         window.location.reload();
     }); 
@@ -611,6 +613,7 @@ async function deleteTrip() {
 }
 
 window.loadTrip = function(tripId) {
+    if (currentTripId !== tripId) lastCenteredTripKey = null;
     currentTripId = tripId;
     showScreen('planner-screen');
     
@@ -652,8 +655,14 @@ window.loadTrip = function(tripId) {
 function centerMapOnTrip() {
     if (!map || !currentTripData || !window.google?.maps?.Geocoder) return;
     const firstDest = currentTripData.destination?.split(' / ')[0] || 'Japan';
+    const centerKey = `${currentTripId}:${firstDest}`;
+    if (lastCenteredTripKey === centerKey) return;
+    lastCenteredTripKey = centerKey;
     new google.maps.Geocoder().geocode({ address: firstDest }, (results, status) => {
-        if (status !== 'OK' || !results?.[0]) return;
+        if (status !== 'OK' || !results?.[0]) {
+            lastCenteredTripKey = null;
+            return;
+        }
         const location = results[0].geometry.location;
         map.setCenter(location);
         fetchWeather(location.lat(), location.lng(), firstDest);

@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { APP_VERSION } from '../js/core.js';
+
+const root = resolve(import.meta.dirname, '..');
+const read = (path) => readFileSync(resolve(root, path), 'utf8');
+
+test('keeps release versions aligned', () => {
+    const packageJson = JSON.parse(read('package.json'));
+    assert.equal(packageJson.version, APP_VERSION);
+    assert.equal(read('VERSION').trim(), APP_VERSION);
+    assert.match(read('CHANGELOG.md'), new RegExp(`## ${APP_VERSION.replaceAll('.', '\\.')}`));
+});
+
+test('ships every local asset referenced by index.html', () => {
+    const html = read('index.html');
+    const references = [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
+        .map((match) => match[1].split('?')[0])
+        .filter((path) => !/^(?:https?:)?\/\//.test(path) && !path.startsWith('#'));
+    const missing = references.filter((path) => !existsSync(resolve(root, path)));
+    assert.deepEqual(missing, []);
+});
+
+test('does not contain duplicate static HTML ids', () => {
+    const ids = [...read('index.html').matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+    const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+    assert.deepEqual(duplicates, []);
+});
+
+test('uses server timestamps and includes the route marker implementation', () => {
+    const app = read('app.js');
+    assert.match(app, /createdAt:\s*serverTimestamp\(\)/);
+    assert.match(app, /updatedAt:\s*serverTimestamp\(\)/);
+    assert.match(app, /function createRouteButton\(/);
+    assert.match(app, /lastCenteredTripKey === centerKey/);
+});
+
+test('preserves trip ownership and restricts membership updates in rules', () => {
+    const rules = read('firestore.rules');
+    assert.match(rules, /request\.resource\.data\.owner == resource\.data\.owner/);
+    assert.match(rules, /resource\.data\.owner in request\.resource\.data\.members/);
+    assert.match(rules, /keepsMembers\(\) \|\| ownerUpdatesMembers\(\)/);
+    assert.match(rules, /request\.resource\.data\.members\.size\(\) == 1/);
+});
