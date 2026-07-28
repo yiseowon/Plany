@@ -5,7 +5,7 @@
     <title>Plany</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=2.2.0">
+    <link rel="stylesheet" href="style.css?v=2.3.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 </head>
@@ -324,7 +324,7 @@
         <div class="modal-content route-content">
             <span class="close-modal" onclick="closeModal('route-detail-modal')">&times;</span>
             <div class="route-modal-heading"><span><i class="fas fa-route"></i></span><div><small>이동경로 상세</small><h3 id="route-modal-title">두 장소 사이 이동</h3><p id="route-modal-date"></p></div></div>
-            <div id="route-comparison" class="route-comparison"></div>
+            <div id="route-comparison" class="route-comparison" aria-live="polite"></div>
             <div class="modal-actions route-modal-actions"><button type="button" class="btn-secondary full-width" data-close-modal="route-detail-modal">닫기</button><button id="book-ticket-btn" class="btn-primary full-width"><i class="fas fa-diamond-turn-right"></i> Google 지도에서 길찾기</button></div>
         </div>
     </div>
@@ -432,6 +432,6 @@
             v: "weekly",
         });
     </script>
-    <script type="module" src="app.js?v=2.2.0"></script>
+    <script type="module" src="app.js?v=2.3.0"></script>
 </body>
 </html>

@@ -34,23 +34,24 @@ import {
     safeImageUrl,
     validateTripDateRange,
     validateTripDraft
-} from "./js/core.js?v=2.2.0";
-import { createDateRangePicker } from "./js/date-picker.js?v=2.2.0";
-import { createTimePicker } from "./js/time-picker.js?v=2.2.0";
-import { initializeAds } from "./js/ads.js?v=2.2.0";
+} from "./js/core.js?v=2.3.0";
+import { createDateRangePicker } from "./js/date-picker.js?v=2.3.0";
+import { createTimePicker } from "./js/time-picker.js?v=2.3.0";
+import { initializeAds } from "./js/ads.js?v=2.3.0";
 import {
     DEFAULT_SIDEBAR_WIDTH,
     clampSidebarWidth,
     readSidebarWidth
-} from "./js/layout-utils.js?v=2.2.0";
+} from "./js/layout-utils.js?v=2.3.0";
 import {
+    buildGoogleTransitUrl,
     buildTransitDeparture,
     formatKoreanRouteDate,
     getTripDate,
     parseLegacyTransitRoute,
     parseModernTransitRoute,
     sortPlacesByTime
-} from "./js/route-utils.js?v=2.2.0";
+} from "./js/route-utils.js?v=2.3.0";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -1201,9 +1202,46 @@ async function showRouteDetailModal(origin, dest) {
             container.appendChild(alternatives);
         }
     } else {
-        container.innerHTML = '<div class="route-empty"><i class="fas fa-bus-simple"></i><strong>대중교통 경로를 찾지 못했어요</strong><p>지역 또는 시간대에 따라 교통 데이터가 제공되지 않을 수 있습니다. 아래 차량·도보 경로를 확인해주세요.</p></div>';
+        container.appendChild(renderGoogleTransitFallback(origin, dest));
     }
     renderAlternativeModes(origin, dest, container);
+}
+
+function renderGoogleTransitFallback(origin, destination) {
+    const section = document.createElement('section');
+    section.className = 'google-transit-fallback';
+    const embedUrl = buildGoogleTransitUrl({
+        origin: origin.location,
+        destination: destination.location,
+        apiKey: CONFIG.GOOGLE_API_KEY,
+        embed: true
+    });
+    section.innerHTML = `
+        <div class="google-transit-intro">
+            <span class="google-transit-icon"><i class="fas fa-train-subway"></i></span>
+            <div><small>GOOGLE 대중교통</small><h4>현지 노선은 지도에서 이어서 볼게요</h4><p>Plany가 노선 데이터를 받지 못한 지역은 Google 지도의 최신 대중교통 화면을 바로 연결합니다.</p></div>
+        </div>
+        <div class="google-transit-frame-shell">
+            <div class="google-transit-frame-loading"><i class="fas fa-circle-notch fa-spin"></i><span>Google 지도를 불러오는 중</span></div>
+        </div>
+        <div class="google-transit-footer"><span><i class="fas fa-location-dot"></i> ${escapeHTML(origin.name)} → ${escapeHTML(destination.name)}</span><button type="button" data-open-google-transit><i class="fas fa-arrow-up-right-from-square"></i> 크게 보기</button></div>`;
+
+    const frameShell = section.querySelector('.google-transit-frame-shell');
+    if (embedUrl) {
+        const frame = document.createElement('iframe');
+        frame.className = 'google-transit-frame';
+        frame.title = `${origin.name}에서 ${destination.name}까지 Google 대중교통 경로`;
+        frame.src = embedUrl;
+        frame.loading = 'eager';
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        frame.allowFullscreen = true;
+        frame.addEventListener('load', () => section.classList.add('is-map-ready'), { once: true });
+        frameShell.appendChild(frame);
+    } else {
+        frameShell.innerHTML = '<div class="google-transit-frame-error"><i class="fas fa-map-location-dot"></i><strong>지도를 바로 표시하지 못했어요</strong><span>아래 버튼으로 Google 지도에서 확인할 수 있습니다.</span></div>';
+    }
+    section.querySelector('[data-open-google-transit]')?.addEventListener('click', redirectToBooking);
+    return section;
 }
 
 function renderTransitJourney(journey) {
@@ -2132,14 +2170,9 @@ async function copyInviteLink() {
 function redirectToBooking() {
     if (!currentRouteContext) return showError('먼저 일정 카드나 지도에서 확인할 이동 구간을 선택해주세요.');
     const { origin, destination } = currentRouteContext;
-    const departure = getTransitDepartureInfo(origin.time);
-    const url = new URL('https://www.google.com/maps/dir/');
-    url.searchParams.set('api', '1');
-    url.searchParams.set('origin', `${origin.location.lat},${origin.location.lng}`);
-    url.searchParams.set('destination', `${destination.location.lat},${destination.location.lng}`);
-    url.searchParams.set('travelmode', 'transit');
-    url.searchParams.set('dir_action', 'navigate');
-    window.open(url.toString(), '_blank', 'noopener');
+    const url = buildGoogleTransitUrl({ origin: origin.location, destination: destination.location });
+    if (!url) return showError('선택한 장소의 위치 정보를 확인해주세요.');
+    window.open(url, '_blank', 'noopener');
 }
 
 function openModal(id) {

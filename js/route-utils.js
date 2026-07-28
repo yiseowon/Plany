@@ -11,6 +11,42 @@ export function sortPlacesByTime(places = []) {
         .map(({ place }) => place);
 }
 
+function readLocationCoordinate(location, key) {
+    const value = location?.[key];
+    const number = typeof value === 'function' ? Number(value.call(location)) : Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+export function buildGoogleTransitUrl({ origin, destination, apiKey = '', embed = false, language = 'ko' } = {}) {
+    const originLat = readLocationCoordinate(origin, 'lat');
+    const originLng = readLocationCoordinate(origin, 'lng');
+    const destinationLat = readLocationCoordinate(destination, 'lat');
+    const destinationLng = readLocationCoordinate(destination, 'lng');
+    if ([originLat, originLng, destinationLat, destinationLng].some((value) => value === null)) return '';
+
+    const start = `${originLat},${originLng}`;
+    const end = `${destinationLat},${destinationLng}`;
+    if (embed) {
+        if (!String(apiKey).trim()) return '';
+        const url = new URL('https://www.google.com/maps/embed/v1/directions');
+        url.searchParams.set('key', String(apiKey).trim());
+        url.searchParams.set('origin', start);
+        url.searchParams.set('destination', end);
+        url.searchParams.set('mode', 'transit');
+        url.searchParams.set('language', language);
+        url.searchParams.set('units', 'metric');
+        return url.toString();
+    }
+
+    const url = new URL('https://www.google.com/maps/dir/');
+    url.searchParams.set('api', '1');
+    url.searchParams.set('origin', start);
+    url.searchParams.set('destination', end);
+    url.searchParams.set('travelmode', 'transit');
+    url.searchParams.set('dir_action', 'navigate');
+    return url.toString();
+}
+
 export function getTripDate(startDate, dayIndex = 0) {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate || '');
     if (!match) return null;

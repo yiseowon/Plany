@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.3.0 - 2026-07-28
+
+### Added
+
+- When Google route data is unavailable, the route sheet now embeds the official interactive Google Maps transit view instead of ending at an empty-state message.
+- The fallback includes a compact Plany-styled heading, loading state, exact segment label, and a one-tap full-map action.
+
+### Improved
+
+- The route sheet is wider on desktop and gives the embedded transit map a travel-friendly touch area on phones.
+- Google Maps transit URLs are created through one tested utility so embedded and full-screen directions always use the same exact coordinates.
+
+### Safety
+
+- The fallback uses the official Maps Embed and Maps URL interfaces. Plany does not scrape, copy, or store Google Maps transit content.
+
+### Operations
+
+- Enabled `maps-embed-backend.googleapis.com` for project `maps-481116`.
+- Added Maps Embed API to the existing six-API allowlist while preserving the GitHub Pages and local HTTP referrer restrictions.
+
 ## 2.2.0 - 2026-07-28
 
 ### Added

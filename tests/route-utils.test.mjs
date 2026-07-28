@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTransitDeparture, parseLegacyTransitRoute, parseModernTransitRoute, sortPlacesByTime } from '../js/route-utils.js';
+import { buildGoogleTransitUrl, buildTransitDeparture, parseLegacyTransitRoute, parseModernTransitRoute, sortPlacesByTime } from '../js/route-utils.js';
+
+test('builds official Google transit URLs for embedded and full map fallbacks', () => {
+    const input = { origin: { lat: 35.681236, lng: 139.767125 }, destination: { lat: 35.658034, lng: 139.701636 } };
+    const embedded = new URL(buildGoogleTransitUrl({ ...input, apiKey: 'public-browser-key', embed: true }));
+    assert.equal(embedded.pathname, '/maps/embed/v1/directions');
+    assert.equal(embedded.searchParams.get('mode'), 'transit');
+    assert.equal(embedded.searchParams.get('origin'), '35.681236,139.767125');
+    assert.equal(embedded.searchParams.get('destination'), '35.658034,139.701636');
+    const fullMap = new URL(buildGoogleTransitUrl(input));
+    assert.equal(fullMap.searchParams.get('travelmode'), 'transit');
+    assert.equal(fullMap.searchParams.get('dir_action'), 'navigate');
+});
 
 test('sorts places chronologically and keeps equal times stable', () => {
     const places = [{ id: 1, time: '18:00' }, { id: 2, time: '10:00' }, { id: 3, time: '10:00' }, { id: 4, time: '' }];
