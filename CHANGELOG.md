@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.2.0 - 2026-07-28
+
+### Added
+
+- The desktop itinerary panel can now be resized by dragging its boundary. The chosen width is restored on the next visit.
+- The resize separator supports keyboard arrows, Home to reset, a visible focus state, and a concise usage tooltip.
+- Transit requests now include the full modern route field set needed for legs, localized values, warnings, and fare advisories.
+
+### Improved
+
+- Map segment controls use clear itinerary labels such as `1→2` instead of the ambiguous `INFO` label.
+- Every itinerary card now has an exact next-segment transit button, so overlapping map markers can never open the wrong leg.
+- Google Routes requests run only after a traveler opens a specific segment, rather than for every segment whenever a trip loads.
+- Identical route requests are deduplicated and cached briefly, reducing latency and avoidable Google Maps usage charges.
+- Transit lookup allows every transit mode and routing option supported by the local provider, maximizing the chance of receiving a usable schedule.
+- Trips outside Google's schedule window show an honest 100-day fallback explanation instead of sending an invalid request.
+- Versioned asset URLs prevent browsers and GitHub Pages from mixing old modules with a newly deployed interface.
+
+### Fixed
+
+- Stale route-detail responses can no longer replace a newer route sheet after a traveler quickly switches segments.
+- Empty route responses expire quickly so a temporary provider gap does not remain cached for a full session.
+- When the modern provider returns no transit schedule for a region, Plany makes one compatibility lookup through Directions Service before declaring the segment unavailable.
+- Panel resizing updates the map canvas without re-fetching paid route data.
+- Agreement records fall back to the signed-in user's existing profile document when the dedicated collection has not yet received its production Firestore rule, removing the repeated permission warning without weakening access controls.
+
+### Operations
+
+- Enabled `routes.googleapis.com` for the Maps project `maps-481116` (project number `895769226148`) and verified permission errors no longer force all routing through deprecated Directions Service.
+- Restricted the active Plany Maps key to the GitHub Pages origin and local port 5500, and to only Maps JavaScript, Places (New), Routes, Geocoding, and legacy Directions fallback APIs.
+
 ## 2.1.0 - 2026-07-28
 
 ### Fixed

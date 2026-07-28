@@ -34,10 +34,15 @@ import {
     safeImageUrl,
     validateTripDateRange,
     validateTripDraft
-} from "./js/core.js";
-import { createDateRangePicker } from "./js/date-picker.js";
-import { createTimePicker } from "./js/time-picker.js";
-import { initializeAds } from "./js/ads.js";
+} from "./js/core.js?v=2.2.0";
+import { createDateRangePicker } from "./js/date-picker.js?v=2.2.0";
+import { createTimePicker } from "./js/time-picker.js?v=2.2.0";
+import { initializeAds } from "./js/ads.js?v=2.2.0";
+import {
+    DEFAULT_SIDEBAR_WIDTH,
+    clampSidebarWidth,
+    readSidebarWidth
+} from "./js/layout-utils.js?v=2.2.0";
 import {
     buildTransitDeparture,
     formatKoreanRouteDate,
@@ -45,7 +50,7 @@ import {
     parseLegacyTransitRoute,
     parseModernTransitRoute,
     sortPlacesByTime
-} from "./js/route-utils.js";
+} from "./js/route-utils.js?v=2.2.0";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -58,7 +63,10 @@ let map;
 let directionsService;
 let RouteClass;
 let modernRoutesUnavailable = false;
-let Place, AdvancedMarkerElement, PinElement, Geometry;
+let routeDetailRequestId = 0;
+const routeRequestCache = new Map();
+const ROUTE_CACHE_TTL = 5 * 60 * 1000;
+let Place, AdvancedMarkerElement, PinElement;
 
 let currentUser = null;
 let currentTripId = null;
@@ -251,14 +259,36 @@ function setupResponsivePlanner() {
     const sidebar = planner?.querySelector('.sidebar');
     const header = sidebar?.querySelector('.sidebar-header');
     const mapContainer = planner?.querySelector('.map-container');
-    if (!planner || !sidebar || !header || !mapContainer) return;
+    const resizer = document.getElementById('sidebar-resizer');
+    if (!planner || !sidebar || !header || !mapContainer || !resizer) return;
     const media = window.matchMedia('(max-width: 700px)');
+    const storageKey = 'plany.sidebarWidth';
+    let currentWidth = readSidebarWidth(safeLocalStorageGet(storageKey), window.innerWidth);
+    let resizeFrame = null;
+
+    const notifyMapResize = () => {
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = null;
+            if (map && window.google?.maps?.event) window.google.maps.event.trigger(map, 'resize');
+        });
+    };
+
+    const applyWidth = (width, persist = false) => {
+        currentWidth = clampSidebarWidth(width, window.innerWidth);
+        planner.style.setProperty('--sidebar-width', `${currentWidth}px`);
+        resizer.setAttribute('aria-valuenow', String(currentWidth));
+        if (persist) safeLocalStorageSet(storageKey, String(currentWidth));
+        notifyMapResize();
+    };
+
     const sync = () => {
         if (media.matches && mapContainer.parentElement !== sidebar) {
             header.insertAdjacentElement('afterend', mapContainer);
         } else if (!media.matches && mapContainer.parentElement !== planner) {
             planner.appendChild(mapContainer);
         }
+        if (!media.matches) applyWidth(currentWidth);
         requestAnimationFrame(() => {
             if (map && window.google?.maps?.event) {
                 window.google.maps.event.trigger(map, 'resize');
@@ -266,8 +296,52 @@ function setupResponsivePlanner() {
             }
         });
     };
+
+    const finishResize = (event) => {
+        if (!document.body.classList.contains('sidebar-resizing')) return;
+        document.body.classList.remove('sidebar-resizing');
+        resizer.classList.remove('is-active');
+        if (event?.pointerId !== undefined && resizer.hasPointerCapture?.(event.pointerId)) {
+            resizer.releasePointerCapture(event.pointerId);
+        }
+        applyWidth(currentWidth, true);
+    };
+
+    resizer.addEventListener('pointerdown', (event) => {
+        if (media.matches || event.button !== 0) return;
+        event.preventDefault();
+        resizer.setPointerCapture?.(event.pointerId);
+        resizer.classList.add('is-active');
+        document.body.classList.add('sidebar-resizing');
+    });
+    resizer.addEventListener('pointermove', (event) => {
+        if (!document.body.classList.contains('sidebar-resizing')) return;
+        const plannerLeft = planner.getBoundingClientRect().left;
+        applyWidth(event.clientX - plannerLeft);
+    });
+    resizer.addEventListener('pointerup', finishResize);
+    resizer.addEventListener('pointercancel', finishResize);
+    resizer.addEventListener('dblclick', () => applyWidth(DEFAULT_SIDEBAR_WIDTH, true));
+    resizer.addEventListener('keydown', (event) => {
+        const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+        if (!direction && event.key !== 'Home') return;
+        event.preventDefault();
+        applyWidth(event.key === 'Home' ? DEFAULT_SIDEBAR_WIDTH : currentWidth + direction * 16, true);
+    });
+    window.addEventListener('resize', () => {
+        if (!media.matches) applyWidth(currentWidth);
+    });
     media.addEventListener?.('change', sync);
+    applyWidth(currentWidth);
     sync();
+}
+
+function safeLocalStorageGet(key) {
+    try { return window.localStorage.getItem(key); } catch { return null; }
+}
+
+function safeLocalStorageSet(key, value) {
+    try { window.localStorage.setItem(key, value); } catch { /* private browsing or blocked storage */ }
 }
 
 function linkDateRange(startId, endId) {
@@ -415,14 +489,24 @@ function recordLocalAgreement() {
 }
 
 async function persistAgreement(user, localAgreement = getLocalAgreement()) {
-    if (!user || !localAgreement) return;
-    await setDoc(doc(db, 'userAgreements', user.uid), {
+    if (!user || !localAgreement) return false;
+    const agreementData = {
         uid: user.uid,
         termsVersion: AGREEMENT_VERSIONS.terms,
         privacyVersion: AGREEMENT_VERSIONS.privacy,
         acceptedAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-    }, { merge: true });
+    };
+    try {
+        await setDoc(doc(db, 'userAgreements', user.uid), agreementData, { merge: true });
+        return true;
+    } catch (error) {
+        const profileRef = doc(db, 'users', user.uid);
+        const profileSnapshot = await getDoc(profileRef);
+        if (!profileSnapshot.exists()) return false;
+        await updateDoc(profileRef, { agreement: agreementData, updatedAt: serverTimestamp() });
+        return true;
+    }
 }
 
 async function ensureRequiredAgreement(user) {
@@ -438,8 +522,21 @@ async function ensureRequiredAgreement(user) {
             return true;
         }
     } catch (error) {
-        console.warn('Agreement status lookup failed:', error);
-        if (hasCurrentLocalAgreement()) return true;
+        try {
+            const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
+            const saved = profileSnapshot.data()?.agreement;
+            if (saved?.termsVersion === AGREEMENT_VERSIONS.terms && saved?.privacyVersion === AGREEMENT_VERSIONS.privacy) {
+                if (!hasCurrentLocalAgreement()) recordLocalAgreement();
+                return true;
+            }
+            if (hasCurrentLocalAgreement()) {
+                await persistAgreement(user);
+                return true;
+            }
+        } catch (fallbackError) {
+            console.warn('Agreement fallback lookup failed:', fallbackError);
+            if (hasCurrentLocalAgreement()) return true;
+        }
     }
     showScreen('login-screen');
     openConsentModal();
@@ -592,6 +689,12 @@ async function saveUserProfile() {
             email: currentUser.email,
             displayName: nickname,
             photoURL: imgSrc,
+            agreement: hasCurrentLocalAgreement() ? {
+                termsVersion: AGREEMENT_VERSIONS.terms,
+                privacyVersion: AGREEMENT_VERSIONS.privacy,
+                acceptedAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            } : null,
             updatedAt: serverTimestamp()
         }, { merge: true });
         
@@ -886,12 +989,11 @@ async function initMapLibrary() {
         const routesLib = await google.maps.importLibrary("routes");
         const placesLib = await google.maps.importLibrary("places");
         const markerLib = await google.maps.importLibrary("marker");
-        const geometryLib = await google.maps.importLibrary("geometry");
+        await google.maps.importLibrary("geometry");
 
         Place = placesLib.Place;
         AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
         PinElement = markerLib.PinElement;
-        Geometry = geometryLib;
         RouteClass = routesLib.Route;
         directionsService = null;
 
@@ -941,7 +1043,7 @@ function renderMap() {
 
     if(places.length > 1) {
         for(let i=0; i<places.length-1; i++) {
-            drawRouteAndInfoButton(places[i], places[i+1]);
+            drawRoutePreview(places[i], places[i+1], i);
         }
     }
 }
@@ -955,7 +1057,44 @@ function ensureLegacyDirectionsService() {
     return directionsService;
 }
 
-async function requestRouteSet({ origin, destination, travelMode, departureTime, alternatives = false }) {
+function getCoordinateValue(point, key) {
+    const value = point?.[key];
+    const number = typeof value === 'function' ? Number(value.call(point)) : Number(value);
+    return Number.isFinite(number) ? number.toFixed(5) : 'unknown';
+}
+
+function getRouteRequestKey({ origin, destination, travelMode, departureTime, alternatives }) {
+    const departureMinute = departureTime instanceof Date && !Number.isNaN(departureTime.getTime())
+        ? Math.floor(departureTime.getTime() / 60000)
+        : 'now';
+    return [
+        getCoordinateValue(origin, 'lat'), getCoordinateValue(origin, 'lng'),
+        getCoordinateValue(destination, 'lat'), getCoordinateValue(destination, 'lng'),
+        travelMode, departureMinute, alternatives ? 'alternatives' : 'primary'
+    ].join('|');
+}
+
+function requestRouteSet(options) {
+    const key = getRouteRequestKey(options);
+    const cached = routeRequestCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    const promise = computeRouteSet(options).catch((error) => {
+        routeRequestCache.delete(key);
+        throw error;
+    });
+    const entry = { promise, expiresAt: Date.now() + ROUTE_CACHE_TTL };
+    promise.then((result) => {
+        if (!result.routes?.length) entry.expiresAt = Date.now() + 60 * 1000;
+    });
+    routeRequestCache.set(key, entry);
+    if (routeRequestCache.size > 80) {
+        const oldestKey = routeRequestCache.keys().next().value;
+        routeRequestCache.delete(oldestKey);
+    }
+    return promise;
+}
+
+async function computeRouteSet({ origin, destination, travelMode, departureTime, alternatives = false }) {
     if (RouteClass && !modernRoutesUnavailable) {
         try {
             const request = {
@@ -963,11 +1102,18 @@ async function requestRouteSet({ origin, destination, travelMode, departureTime,
                 destination,
                 travelMode,
                 computeAlternativeRoutes: alternatives,
-                fields: ['path', 'legs', 'localizedValues', 'warnings']
+                fields: ['path', 'legs', 'travelAdvisory', 'localizedValues', 'warnings']
             };
-            if (travelMode === 'TRANSIT' && departureTime) request.departureTime = departureTime;
+            if (travelMode === 'TRANSIT') {
+                if (departureTime) request.departureTime = departureTime;
+            } else if (travelMode === 'DRIVING') {
+                request.routingPreference = 'TRAFFIC_AWARE';
+            }
             const result = await RouteClass.computeRoutes(request);
-            return { kind: 'modern', routes: result.routes || [] };
+            const modernRoutes = result.routes || [];
+            if (modernRoutes.length || travelMode !== 'TRANSIT') {
+                return { kind: 'modern', routes: modernRoutes };
+            }
         } catch (error) {
             if (!modernRoutesUnavailable) {
                 console.info('Routes API를 사용할 수 없어 기존 경로 서비스로 전환합니다.', error?.message || error);
@@ -982,31 +1128,11 @@ async function requestRouteSet({ origin, destination, travelMode, departureTime,
     }));
 }
 
-async function drawRouteAndInfoButton(origin, destination) {
-    const { queryDate } = getTransitDepartureInfo(origin.time);
-    let result = await requestRouteSet({
-        origin: origin.location,
-        destination: destination.location,
-        travelMode: google.maps.TravelMode.TRANSIT,
-        departureTime: queryDate
-    });
-    if (!result.routes.length) {
-        result = await requestRouteSet({
-            origin: origin.location,
-            destination: destination.location,
-            travelMode: google.maps.TravelMode.DRIVING
-        });
-    }
-    const route = result.routes[0];
-    const path = result.kind === 'modern' ? route?.path : route?.overview_path;
-    if (path?.length) {
-        renderPolyline(path, origin, destination);
-        return;
-    }
+function drawRoutePreview(origin, destination, index) {
     const directPath = [origin.location, destination.location];
     const polyline = new google.maps.Polyline({
         path: directPath, map,
-        strokeColor: '#364fc7', strokeWeight: 6, strokeOpacity: 1,
+        strokeColor: '#0a84ff', strokeWeight: 4, strokeOpacity: .58,
         geodesic: true,
         icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW }, offset: '50%' }]
     });
@@ -1015,57 +1141,27 @@ async function drawRouteAndInfoButton(origin, destination) {
         new google.maps.LatLng(origin.location),
         new google.maps.LatLng(destination.location), 0.5
     );
-    createRouteButton(midPoint, origin, destination);
+    createRouteButton(midPoint, origin, destination, `${index + 1}→${index + 2}`);
 }
 
-function renderPolyline(path, origin, destination) {
-    const polyline = new google.maps.Polyline({
-        path: path, map: map, 
-        strokeColor: '#364fc7',
-        strokeWeight: 7, 
-        strokeOpacity: 1.0
-    });
-    mapPolylines.push(polyline);
-    createRouteButton(getPolylineMidpoint(path), origin, destination);
-}
-
-function getPolylineMidpoint(path) {
-    if (!Geometry || !path || path.length === 0) return null;
-    const totalDist = google.maps.geometry.spherical.computeLength(path);
-    const halfDist = totalDist / 2;
-    let distSoFar = 0;
-    for (let i = 0; i < path.length - 1; i++) {
-        const segmentDist = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]);
-        if (distSoFar + segmentDist >= halfDist) {
-            const ratio = (halfDist - distSoFar) / segmentDist;
-            return google.maps.geometry.spherical.interpolate(path[i], path[i+1], ratio);
-        }
-        distSoFar += segmentDist;
-    }
-    return path[Math.floor(path.length / 2)];
-}
-
-function createRouteButton(position, origin, destination) {
+function createRouteButton(position, origin, destination, label = '경로') {
     if (!position || !AdvancedMarkerElement) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'route-info-marker';
-    button.setAttribute('aria-label', '이동 경로 정보 보기');
-    button.append('INFO ');
+    const description = `${origin.name}에서 ${destination.name} 이동경로 보기`;
+    const markerContent = document.createElement('div');
+    markerContent.className = 'route-info-marker';
+    markerContent.append(`${label} `);
     const icon = document.createElement('i');
     icon.className = 'fas fa-info-circle';
     icon.setAttribute('aria-hidden', 'true');
-    button.appendChild(icon);
-    button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        showRouteDetailModal(origin, destination);
-    });
+    markerContent.appendChild(icon);
     const infoMarker = new AdvancedMarkerElement({
         map,
         position,
-        content: button,
-        title: '경로 정보 확인'
+        content: markerContent,
+        title: description,
+        gmpClickable: true
     });
+    infoMarker.addEventListener('gmp-click', () => showRouteDetailModal(origin, destination));
     mapRouteMarkers.push(infoMarker);
 }
 
@@ -1073,11 +1169,14 @@ async function showRouteDetailModal(origin, dest) {
     const container = document.getElementById('route-comparison');
     if (!container) return;
     currentRouteContext = { origin, destination: dest };
+    const requestId = ++routeDetailRequestId;
     document.getElementById('route-modal-title').textContent = `${origin.name} → ${dest.name}`;
     const departure = getTransitDepartureInfo(origin.time);
-    document.getElementById('route-modal-date').textContent = departure.adjusted
+    document.getElementById('route-modal-date').textContent = departure.adjustment === 'past'
         ? `${formatKoreanRouteDate(departure.requested)} 일정 · 지난 시간이어서 현재 운행정보로 조회`
-        : `${formatKoreanRouteDate(departure.queryDate)} 출발 기준`;
+        : departure.adjustment === 'future'
+            ? `${formatKoreanRouteDate(departure.requested)} 일정 · API 제공 범위를 넘어 가장 가까운 운행일로 조회`
+            : `${formatKoreanRouteDate(departure.queryDate)} 출발 기준`;
     container.innerHTML = '<div class="route-loading"><i class="fas fa-circle-notch fa-spin"></i><strong>가장 좋은 이동경로를 찾는 중</strong><span>대중교통과 대체 경로를 함께 확인하고 있어요.</span></div>';
     openModal('route-detail-modal');
 
@@ -1088,6 +1187,7 @@ async function showRouteDetailModal(origin, dest) {
         departureTime: departure.queryDate,
         alternatives: true
     });
+    if (requestId !== routeDetailRequestId) return;
     container.innerHTML = '';
     if (result.routes[0]) {
         const journey = result.kind === 'modern'
@@ -1202,6 +1302,7 @@ function renderPlaceList() {
     const places = currentTripData.days[currentDayIndex].places;
 
     places.forEach((place, idx) => {
+        const nextPlace = places[idx + 1];
         const div = document.createElement('div');
         div.className = 'place-card';
         div.setAttribute('data-id', place.id);
@@ -1242,8 +1343,13 @@ function renderPlaceList() {
                     <button class="btn-find-way" onclick="openNavToPlace(${place.location.lat}, ${place.location.lng})">
                         <i class="fas fa-location-arrow"></i> 길찾기
                     </button>
+                    ${nextPlace ? `<button type="button" class="btn-segment-route"><i class="fas fa-bus-simple"></i> ${idx + 1}→${idx + 2} 교통</button>` : ''}
                 </div>
             </div>`;
+        div.querySelector('.btn-segment-route')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            showRouteDetailModal(place, nextPlace);
+        });
         list.appendChild(div);
     });
 
@@ -2024,7 +2130,7 @@ async function copyInviteLink() {
     showSuccess("초대 링크를 복사했습니다!");
 }
 function redirectToBooking() {
-    if (!currentRouteContext) return showError('먼저 지도 위 이동경로의 INFO를 눌러주세요.');
+    if (!currentRouteContext) return showError('먼저 일정 카드나 지도에서 확인할 이동 구간을 선택해주세요.');
     const { origin, destination } = currentRouteContext;
     const departure = getTransitDepartureInfo(origin.time);
     const url = new URL('https://www.google.com/maps/dir/');

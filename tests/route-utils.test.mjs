@@ -24,6 +24,15 @@ test('moves past transit requests to a valid near-future time', () => {
     assert.equal(result.queryDate.getTime(), now.getTime() + 300000);
 });
 
+test('keeps transit requests inside the API 100-day schedule window', () => {
+    const now = new Date(2026, 6, 28, 10, 0, 0);
+    const result = buildTransitDeparture('2027-12-01', 0, '09:00', now);
+    assert.equal(result.adjustment, 'future');
+    assert.equal(result.adjusted, true);
+    assert.ok(result.queryDate > now);
+    assert.ok(result.queryDate <= new Date(now.getTime() + 100 * 24 * 60 * 60 * 1000));
+});
+
 test('parses line, vehicle, stops, station coordinates and fare', () => {
     const route = {
         fare: { text: '¥210' },

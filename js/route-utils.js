@@ -26,11 +26,13 @@ export function buildTransitDeparture(startDate, dayIndex, time, now = new Date(
     const requested = tripDate || new Date(now);
     requested.setHours(hour, minute, 0, 0);
     const minimum = new Date(now.getTime() + 5 * 60 * 1000);
-    const adjusted = requested <= minimum;
+    const maximum = new Date(now.getTime() + 100 * 24 * 60 * 60 * 1000 - 5 * 60 * 1000);
+    const adjustment = requested <= minimum ? 'past' : requested > maximum ? 'future' : null;
     return {
         requested,
-        queryDate: adjusted ? minimum : requested,
-        adjusted,
+        queryDate: adjustment === 'past' ? minimum : adjustment === 'future' ? maximum : requested,
+        adjusted: Boolean(adjustment),
+        adjustment,
     };
 }
 

@@ -44,6 +44,7 @@ test('requires versioned terms and privacy agreement before sign-in', () => {
     assert.match(app, /AGREEMENT_VERSIONS/);
     assert.match(app, /acceptedAt:\s*serverTimestamp\(\)/);
     assert.match(app, /if \(!hasCurrentLocalAgreement\(\)\)/);
+    assert.match(app, /profileSnapshot\.data\(\)\?\.agreement/);
 });
 
 test('uses server timestamps and includes the route marker implementation', () => {
@@ -51,6 +52,8 @@ test('uses server timestamps and includes the route marker implementation', () =
     assert.match(app, /createdAt:\s*serverTimestamp\(\)/);
     assert.match(app, /updatedAt:\s*serverTimestamp\(\)/);
     assert.match(app, /function createRouteButton\(/);
+    assert.match(app, /function drawRoutePreview\(/);
+    assert.doesNotMatch(app, /drawRouteAndInfoButton\(/);
     assert.match(app, /lastCenteredTripKey === centerKey/);
 });
 
