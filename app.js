@@ -38,6 +38,14 @@ import {
 import { createDateRangePicker } from "./js/date-picker.js";
 import { createTimePicker } from "./js/time-picker.js";
 import { initializeAds } from "./js/ads.js";
+import {
+    buildTransitDeparture,
+    formatKoreanRouteDate,
+    getTripDate,
+    parseLegacyTransitRoute,
+    parseModernTransitRoute,
+    sortPlacesByTime
+} from "./js/route-utils.js";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -48,6 +56,8 @@ provider.setCustomParameters({ prompt: 'select_account' });
 
 let map;
 let directionsService;
+let RouteClass;
+let modernRoutesUnavailable = false;
 let Place, AdvancedMarkerElement, PinElement, Geometry;
 
 let currentUser = null;
@@ -65,6 +75,8 @@ let timePicker = null;
 let pendingInviteTripId = null;
 let appEntryInProgress = false;
 let profileExists = false;
+let currentRouteContext = null;
+const normalizedTripOrders = new Set();
 
 const AGREEMENT_VERSIONS = Object.freeze({ terms: '2.0', privacy: '2.0' });
 const AGREEMENT_STORAGE_KEY = 'plany.requiredAgreement.v2';
@@ -205,6 +217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     dateRangePicker = createDateRangePicker({ onError: showError });
     timePicker = createTimePicker();
     timePicker.syncAll();
+    setupResponsivePlanner();
     initConsentFlow();
     initModalControls();
     addListener('open-privacy-settings', 'click', () => openModal('privacy-settings-modal'));
@@ -232,6 +245,30 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 });
+
+function setupResponsivePlanner() {
+    const planner = document.getElementById('planner-screen');
+    const sidebar = planner?.querySelector('.sidebar');
+    const header = sidebar?.querySelector('.sidebar-header');
+    const mapContainer = planner?.querySelector('.map-container');
+    if (!planner || !sidebar || !header || !mapContainer) return;
+    const media = window.matchMedia('(max-width: 700px)');
+    const sync = () => {
+        if (media.matches && mapContainer.parentElement !== sidebar) {
+            header.insertAdjacentElement('afterend', mapContainer);
+        } else if (!media.matches && mapContainer.parentElement !== planner) {
+            planner.appendChild(mapContainer);
+        }
+        requestAnimationFrame(() => {
+            if (map && window.google?.maps?.event) {
+                window.google.maps.event.trigger(map, 'resize');
+                renderMap();
+            }
+        });
+    };
+    media.addEventListener?.('change', sync);
+    sync();
+}
 
 function linkDateRange(startId, endId) {
     const startInput = document.getElementById(startId);
@@ -773,6 +810,7 @@ window.loadTrip = function(tripId) {
     unsubscribeCurrentTrip = onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
         if (!docSnap.exists()) { showScreen('dashboard-screen'); return; }
         currentTripData = docSnap.data();
+        normalizeExistingTripPlaceOrder(tripId);
         centerMapOnTrip();
         
         // 프로필 정보 가져오기 (닉네임 표시용)
@@ -796,6 +834,22 @@ window.loadTrip = function(tripId) {
         console.error(error);
         showError(formatFirebaseDataError(error));
     });
+}
+
+function normalizeExistingTripPlaceOrder(tripId) {
+    if (!tripId || normalizedTripOrders.has(tripId) || !Array.isArray(currentTripData?.days)) return;
+    normalizedTripOrders.add(tripId);
+    let changed = false;
+    const days = currentTripData.days.map((day) => {
+        const original = Array.isArray(day.places) ? day.places : [];
+        const sorted = sortPlacesByTime(original);
+        if (sorted.some((place, index) => place !== original[index])) changed = true;
+        return { ...day, places: sorted };
+    });
+    if (!changed) return;
+    currentTripData.days = days;
+    updateDoc(doc(db, 'trips', tripId), { days, updatedAt: serverTimestamp() })
+        .catch((error) => console.warn('기존 일정 시간순 정리 실패:', error));
 }
 
 function centerMapOnTrip() {
@@ -829,7 +883,7 @@ async function saveTrip() {
 async function initMapLibrary() {
     try {
         const { Map } = await google.maps.importLibrary("maps");
-        const { DirectionsService } = await google.maps.importLibrary("routes");
+        const routesLib = await google.maps.importLibrary("routes");
         const placesLib = await google.maps.importLibrary("places");
         const markerLib = await google.maps.importLibrary("marker");
         const geometryLib = await google.maps.importLibrary("geometry");
@@ -838,7 +892,8 @@ async function initMapLibrary() {
         AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
         PinElement = markerLib.PinElement;
         Geometry = geometryLib;
-        directionsService = new DirectionsService();
+        RouteClass = routesLib.Route;
+        directionsService = null;
 
         const mapEl = document.getElementById('map');
         if(mapEl) {
@@ -876,7 +931,7 @@ function renderMap() {
         });
         
         const marker = new AdvancedMarkerElement({
-            map, position: place.location, content: pin.element, title: place.name
+            map, position: place.location, content: pin, title: place.name
         });
         mapMarkers.push(marker);
         bounds.extend(place.location);
@@ -891,64 +946,76 @@ function renderMap() {
     }
 }
 
-function getSafeTransitDate(timeStr) {
-    const now = new Date();
-    const targetDate = new Date();
-
-    if(timeStr) { 
-        const [h, m] = timeStr.split(':'); 
-        targetDate.setHours(h, m, 0, 0); 
-    } else { 
-        targetDate.setHours(10, 0, 0, 0); 
-    }
-
-    if (targetDate < now) {
-        targetDate.setDate(targetDate.getDate() + 1);
-    }
-    return targetDate;
+function getTransitDepartureInfo(time) {
+    return buildTransitDeparture(currentTripData?.startDate, currentDayIndex, time);
 }
 
-function drawRouteAndInfoButton(origin, destination) {
-    const targetDate = getSafeTransitDate(origin.time);
+function ensureLegacyDirectionsService() {
+    if (!directionsService) directionsService = new google.maps.DirectionsService();
+    return directionsService;
+}
 
-    const requestTransit = {
+async function requestRouteSet({ origin, destination, travelMode, departureTime, alternatives = false }) {
+    if (RouteClass && !modernRoutesUnavailable) {
+        try {
+            const request = {
+                origin,
+                destination,
+                travelMode,
+                computeAlternativeRoutes: alternatives,
+                fields: ['path', 'legs', 'localizedValues', 'warnings']
+            };
+            if (travelMode === 'TRANSIT' && departureTime) request.departureTime = departureTime;
+            const result = await RouteClass.computeRoutes(request);
+            return { kind: 'modern', routes: result.routes || [] };
+        } catch (error) {
+            if (!modernRoutesUnavailable) {
+                console.info('Routes API를 사용할 수 없어 기존 경로 서비스로 전환합니다.', error?.message || error);
+            }
+            modernRoutesUnavailable = true;
+        }
+    }
+    const request = { origin, destination, travelMode, provideRouteAlternatives: alternatives };
+    if (travelMode === google.maps.TravelMode.TRANSIT && departureTime) request.transitOptions = { departureTime };
+    return new Promise((resolve) => ensureLegacyDirectionsService().route(request, (result, status) => {
+        resolve({ kind: 'legacy', routes: status === 'OK' ? result.routes || [] : [], status });
+    }));
+}
+
+async function drawRouteAndInfoButton(origin, destination) {
+    const { queryDate } = getTransitDepartureInfo(origin.time);
+    let result = await requestRouteSet({
         origin: origin.location,
         destination: destination.location,
         travelMode: google.maps.TravelMode.TRANSIT,
-        transitOptions: { departureTime: targetDate }
-    };
-
-    directionsService.route(requestTransit, (result, status) => {
-        if (status === 'OK') {
-            renderPolyline(result.routes[0].overview_path, origin, destination);
-        } else {
-            const requestDriving = {
-                origin: origin.location,
-                destination: destination.location,
-                travelMode: google.maps.TravelMode.DRIVING
-            };
-            directionsService.route(requestDriving, (resDriving, statusDriving) => {
-                if (statusDriving === 'OK') {
-                    renderPolyline(resDriving.routes[0].overview_path, origin, destination);
-                } else {
-                    const path = [origin.location, destination.location];
-                    const polyline = new google.maps.Polyline({
-                        path: path, map: map, 
-                        strokeColor: '#364fc7', strokeWeight: 6, strokeOpacity: 1.0, 
-                        geodesic: true, 
-                        icons: [{ icon: {path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW}, offset: '50%' }]
-                    });
-                    mapPolylines.push(polyline);
-                    
-                    const midPoint = google.maps.geometry.spherical.interpolate(
-                        new google.maps.LatLng(origin.location), 
-                        new google.maps.LatLng(destination.location), 0.5
-                    );
-                    createRouteButton(midPoint, origin, destination);
-                }
-            });
-        }
+        departureTime: queryDate
     });
+    if (!result.routes.length) {
+        result = await requestRouteSet({
+            origin: origin.location,
+            destination: destination.location,
+            travelMode: google.maps.TravelMode.DRIVING
+        });
+    }
+    const route = result.routes[0];
+    const path = result.kind === 'modern' ? route?.path : route?.overview_path;
+    if (path?.length) {
+        renderPolyline(path, origin, destination);
+        return;
+    }
+    const directPath = [origin.location, destination.location];
+    const polyline = new google.maps.Polyline({
+        path: directPath, map,
+        strokeColor: '#364fc7', strokeWeight: 6, strokeOpacity: 1,
+        geodesic: true,
+        icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW }, offset: '50%' }]
+    });
+    mapPolylines.push(polyline);
+    const midPoint = google.maps.geometry.spherical.interpolate(
+        new google.maps.LatLng(origin.location),
+        new google.maps.LatLng(destination.location), 0.5
+    );
+    createRouteButton(midPoint, origin, destination);
 }
 
 function renderPolyline(path, origin, destination) {
@@ -1002,91 +1069,129 @@ function createRouteButton(position, origin, destination) {
     mapRouteMarkers.push(infoMarker);
 }
 
-function showRouteDetailModal(origin, dest) {
+async function showRouteDetailModal(origin, dest) {
     const container = document.getElementById('route-comparison');
-    if(container) container.innerHTML = '<p style="text-align:center;">경로 정보 로딩 중...</p>';
+    if (!container) return;
+    currentRouteContext = { origin, destination: dest };
+    document.getElementById('route-modal-title').textContent = `${origin.name} → ${dest.name}`;
+    const departure = getTransitDepartureInfo(origin.time);
+    document.getElementById('route-modal-date').textContent = departure.adjusted
+        ? `${formatKoreanRouteDate(departure.requested)} 일정 · 지난 시간이어서 현재 운행정보로 조회`
+        : `${formatKoreanRouteDate(departure.queryDate)} 출발 기준`;
+    container.innerHTML = '<div class="route-loading"><i class="fas fa-circle-notch fa-spin"></i><strong>가장 좋은 이동경로를 찾는 중</strong><span>대중교통과 대체 경로를 함께 확인하고 있어요.</span></div>';
     openModal('route-detail-modal');
 
-    const targetDate = getSafeTransitDate(origin.time);
-
-    directionsService.route({
-        origin: origin.location, destination: dest.location, 
-        travelMode: google.maps.TravelMode.TRANSIT, 
-        transitOptions: { departureTime: targetDate }
-    }, (res, status) => {
-        if(container) {
-            container.innerHTML = '';
-            if (status === 'OK') {
-                const leg = res.routes[0].legs[0];
-                container.innerHTML = `
-                    <div class="transport-card">
-                        <div class="transport-header">
-                            <span>🚍 대중교통 추천</span>
-                            <span>${leg.duration.text}</span>
-                        </div>
-                        <div class="transport-steps">
-                            ${formatTransitSteps(leg.steps)}
-                        </div>
-                    </div>
-                `;
-                container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
-            } else {
-                container.innerHTML = '<p style="text-align:center; padding:20px; color:#868e96;">이 구간은 대중교통 정보가 없거나(일본 등), 도보가 빠릅니다.<br>아래 대체 경로를 참고하세요.</p>';
-                container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
-            }
-        }
+    const result = await requestRouteSet({
+        origin: origin.location,
+        destination: dest.location,
+        travelMode: google.maps.TravelMode.TRANSIT,
+        departureTime: departure.queryDate,
+        alternatives: true
     });
+    container.innerHTML = '';
+    if (result.routes[0]) {
+        const journey = result.kind === 'modern'
+            ? parseModernTransitRoute(result.routes[0])
+            : parseLegacyTransitRoute(result.routes[0]);
+        container.appendChild(renderTransitJourney(journey));
+        if (result.routes.length > 1) {
+            const alternatives = document.createElement('p');
+            alternatives.className = 'route-alternative-note';
+            alternatives.textContent = `비슷한 대중교통 경로 ${result.routes.length - 1}개가 더 있어요. Google 지도에서 전체 경로를 비교할 수 있습니다.`;
+            container.appendChild(alternatives);
+        }
+    } else {
+        container.innerHTML = '<div class="route-empty"><i class="fas fa-bus-simple"></i><strong>대중교통 경로를 찾지 못했어요</strong><p>지역 또는 시간대에 따라 교통 데이터가 제공되지 않을 수 있습니다. 아래 차량·도보 경로를 확인해주세요.</p></div>';
+    }
+    renderAlternativeModes(origin, dest, container);
 }
 
-function formatTransitSteps(steps) {
-    let html = '';
-    steps.forEach(step => {
-        if (step.travel_mode === 'TRANSIT') {
-            const line = step.transit.line;
-            const color = line.color || '#339af0';
-            const textColor = line.text_color || '#fff';
-            html += `
-                <div class="transit-step" style="display:flex; gap:10px; margin-bottom:10px;">
-                    <span style="background:${color}; color:${textColor}; padding:2px 6px; border-radius:4px; font-weight:bold; height:fit-content; white-space:nowrap;">
-                        ${line.vehicle.name||''} ${line.short_name||line.name}
-                    </span>
-                    <div>
-                        <div style="font-weight:bold;">${step.transit.departure_stop.name} 승차</div>
-                        <div style="font-size:0.85em; color:#868e96;">⬇ ${step.duration.text} (${step.transit.num_stops}개 역)</div>
-                        <div style="font-weight:bold;">${step.transit.arrival_stop.name} 하차</div>
-                    </div>
-                </div>`;
-        } else if (step.travel_mode === 'WALKING') {
-            html += `<div style="color:#868e96; font-size:0.9em; margin-bottom:10px;"><i class="fas fa-walking"></i> 도보 ${step.duration.text} (${step.distance.text})</div>`;
-        }
-    });
-    return html;
+function renderTransitJourney(journey) {
+    const article = document.createElement('article');
+    article.className = 'transit-journey';
+    const fare = journey.fare ? `<div><span>예상 운임</span><strong>${escapeHTML(journey.fare)}</strong></div>` : '';
+    article.innerHTML = `
+        <div class="route-summary-card">
+            <div class="route-summary-top"><span><i class="fas fa-bus-simple"></i> 추천 대중교통</span><strong>${escapeHTML(journey.duration || '시간 정보 없음')}</strong></div>
+            <div class="route-time-band"><strong>${escapeHTML(journey.departureTime || '--:--')}</strong><span><i></i>${escapeHTML(journey.distance || '')}<i></i></span><strong>${escapeHTML(journey.arrivalTime || '--:--')}</strong></div>
+            <div class="route-summary-metrics"><div><span>환승</span><strong>${journey.transfers}회</strong></div>${fare}<div><span>구간</span><strong>${journey.segments.length}개</strong></div></div>
+        </div>
+        <div class="route-segments"></div>`;
+    const segmentList = article.querySelector('.route-segments');
+    journey.segments.forEach((segment, index) => segmentList.appendChild(renderRouteSegment(segment, index)));
+    if (journey.warnings.length) {
+        const warning = document.createElement('div');
+        warning.className = 'route-api-warning';
+        warning.innerHTML = `<i class="fas fa-triangle-exclamation"></i><span>${journey.warnings.map(item => escapeHTML(item)).join('<br>')}</span>`;
+        article.appendChild(warning);
+    }
+    if (journey.copyrights) {
+        const credit = document.createElement('small');
+        credit.className = 'route-credit';
+        credit.textContent = journey.copyrights;
+        article.appendChild(credit);
+    }
+    return article;
 }
 
-function addOtherModes(origin, dest, container) {
-    const wrapper = document.createElement('div');
+function stationLink(stop, suffix) {
+    const name = escapeHTML(stop?.name || '정류장 정보 없음');
+    if (!stop?.location) return `<strong>${name}</strong><small>${suffix}</small>`;
+    const { lat, lng } = stop.location;
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+    return `<a href="${url}" target="_blank" rel="noopener"><strong>${name}</strong><small>${suffix} · 지도에서 위치 보기 <i class="fas fa-arrow-up-right-from-square"></i></small></a>`;
+}
+
+function renderRouteSegment(segment, index) {
+    const item = document.createElement('div');
+    item.className = `route-segment ${segment.mode === 'TRANSIT' ? 'is-transit' : 'is-walking'}`;
+    if (segment.mode !== 'TRANSIT') {
+        const instruction = normalizeText(String(segment.instructions || '').replace(/<[^>]*>/g, ' '));
+        item.innerHTML = `<span class="segment-node"><i class="fas fa-person-walking"></i></span><div><strong>도보 ${escapeHTML(segment.duration || '')}</strong><small>${escapeHTML(segment.distance || '')}${instruction ? ` · ${escapeHTML(instruction)}` : ''}</small></div>`;
+        return item;
+    }
+    const lineLabel = `${segment.vehicle} ${segment.lineName}`.trim();
+    const detailParts = [segment.duration, segment.stops === null ? '' : `${segment.stops}개 정류장`, segment.headwayMinutes ? `약 ${segment.headwayMinutes}분 간격` : ''].filter(Boolean);
+    item.innerHTML = `
+        <span class="segment-node transit" style="--line-color:${segment.color}"><i class="fas fa-${segment.vehicleType.includes('BUS') ? 'bus-simple' : 'train-subway'}"></i></span>
+        <div class="transit-segment-body">
+            <div class="transit-line-head"><span class="transit-line-badge" style="background:${segment.color};color:${segment.textColor}">${escapeHTML(lineLabel)}</span>${segment.tripName ? `<small>운행 ${escapeHTML(segment.tripName)}</small>` : ''}</div>
+            ${segment.lineFullName && segment.lineFullName !== segment.lineName ? `<p class="transit-full-name">${escapeHTML(segment.lineFullName)}</p>` : ''}
+            <div class="station-row"><time>${escapeHTML(segment.departureTime || '')}</time>${stationLink(segment.departureStop, '승차')}</div>
+            <div class="transit-ride-line" style="--line-color:${segment.color}"><span>${escapeHTML(detailParts.join(' · '))}</span>${segment.headsign ? `<small>${escapeHTML(segment.headsign)} 방면</small>` : ''}</div>
+            <div class="station-row"><time>${escapeHTML(segment.arrivalTime || '')}</time>${stationLink(segment.arrivalStop, '하차')}</div>
+            ${segment.agency ? `<p class="transit-agency"><i class="fas fa-building"></i> ${escapeHTML(segment.agency)}</p>` : ''}
+        </div>`;
+    return item;
+}
+
+function renderAlternativeModes(origin, dest, container) {
+    const wrapper = document.createElement('section');
+    wrapper.className = 'route-alternatives';
+    wrapper.innerHTML = '<h4>다른 이동 방법</h4><div class="alternative-grid"></div><p class="walking-disclaimer"><i class="fas fa-circle-info"></i> 도보 경로에는 보행로가 명확하지 않은 구간이 포함될 수 있으니 현지 표지와 안전을 확인하세요.</p>';
+    const grid = wrapper.querySelector('.alternative-grid');
+    container.appendChild(wrapper);
     const modes = [
-        { mode: google.maps.TravelMode.DRIVING, label: "🚖 택시 (예상)", icon: "fa-taxi" },
-        { mode: google.maps.TravelMode.WALKING, label: "🚶 도보", icon: "fa-walking" }
+        { mode: google.maps.TravelMode.DRIVING, label: '차량·택시', icon: 'fa-car-side' },
+        { mode: google.maps.TravelMode.WALKING, label: '도보', icon: 'fa-person-walking' }
     ];
-    modes.forEach(m => {
-        directionsService.route({ origin: origin.location, destination: dest.location, travelMode: m.mode }, (res, status) => {
-            if (status === 'OK') {
-                const leg = res.routes[0].legs[0];
-                let costStr = "";
-                if (m.mode === google.maps.TravelMode.DRIVING) {
-                    const km = leg.distance.value / 1000;
-                    costStr = `(약 ${Math.round(500 + km*400).toLocaleString()}엔)`;
-                }
-                const div = document.createElement('div');
-                div.className = "transport-option";
-                div.style.cssText = "display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #eee;";
-                div.innerHTML = `<div><i class="fas ${m.icon}"></i> ${m.label} <small style="color:#fa5252">${costStr}</small></div><div>${leg.duration.text}</div>`;
-                wrapper.appendChild(div);
-            }
-        });
+    modes.forEach(async (m) => {
+        const card = document.createElement('div');
+        card.className = 'alternative-card is-loading';
+        card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>조회 중</strong>`;
+        grid.appendChild(card);
+        const result = await requestRouteSet({ origin: origin.location, destination: dest.location, travelMode: m.mode });
+        const route = result.routes[0];
+        const leg = route?.legs?.[0];
+        card.classList.remove('is-loading');
+        if (route && leg) {
+            const duration = result.kind === 'modern' ? route.localizedValues?.duration || leg.localizedValues?.duration : leg.duration?.text;
+            const distance = result.kind === 'modern' ? route.localizedValues?.distance || leg.localizedValues?.distance : leg.distance?.text;
+            card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>${escapeHTML(duration || '-')}</strong><small>${escapeHTML(distance || '')}</small>`;
+        } else {
+            card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>정보 없음</strong>`;
+        }
     });
-    return wrapper;
 }
 
 function renderPlaceList() {
@@ -1110,7 +1215,7 @@ function renderPlaceList() {
 
         // 메모가 있을 때만 meta 영역 표시 (비용은 이제 체크 안 함)
         const hasMeta = !!place.memo;
-        const safeType = ['food', 'sight', 'hotel', 'transport', 'shopping'].includes(place.type) ? place.type : 'sight';
+        const safeType = ['restaurant', 'attraction', 'hotel', 'transport', 'shopping', 'food', 'sight'].includes(place.type) ? place.type : 'attraction';
         const safeName = escapeHTML(place.name);
         const safeTime = escapeHTML(place.time || '--:--');
         const safeMemo = escapeHTML(place.memo);
@@ -1329,7 +1434,7 @@ async function buildSmartDraft() {
     }
 
     currentTripData.days[currentDayIndex].places.push(...draftPlaces);
-    currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    currentTripData.days[currentDayIndex].places = sortPlacesByTime(currentTripData.days[currentDayIndex].places);
     await saveTrip();
     renderTripInsights();
     renderPlaceList();
@@ -1372,7 +1477,7 @@ window.fillMealGap = async function() {
             memo: `AI 초안: ${needLunch ? '점심' : '저녁'} 후보`,
             cost: 0
         });
-        currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        currentTripData.days[currentDayIndex].places = sortPlacesByTime(currentTripData.days[currentDayIndex].places);
         await saveTrip();
         renderTripInsights();
         renderPlaceList();
@@ -1449,8 +1554,9 @@ function confirmAddPlace() {
         time: timeVal, memo: '', cost: 0 
     };
     
-    currentTripData.days[currentDayIndex].places.push(newPlace);
-    saveTrip(); 
+    const day = currentTripData.days[currentDayIndex];
+    day.places = sortPlacesByTime([...day.places, newPlace]);
+    saveTrip();
     closeModal('time-selection-modal'); 
     map.panTo(newPlace.location); map.setZoom(15); 
     fetchWeather(newPlace.location.lat, newPlace.location.lng, newPlace.name);
@@ -1559,7 +1665,16 @@ function renderDayTabs() {
         c.appendChild(b);
     });
 }
-function selectDay(idx) { currentDayIndex = idx; renderDayTabs(); renderTripInsights(); renderPlaceList(); renderMap(); }
+function selectDay(idx) { currentDayIndex = idx; updatePlannerSubtitle(); renderDayTabs(); renderTripInsights(); renderPlaceList(); renderMap(); }
+
+function updatePlannerSubtitle() {
+    const subtitle = document.getElementById('planner-subtitle');
+    if (!subtitle || !currentTripData) return;
+    const date = getTripDate(currentTripData.startDate, currentDayIndex);
+    const dateText = date ? `${date.getMonth() + 1}월 ${date.getDate()}일` : `${currentDayIndex + 1}일차`;
+    const destination = String(currentTripData.destination || '').split(' / ')[0];
+    subtitle.textContent = `${dateText} · ${destination}`;
+}
 
 async function renderMembers() {
     const list = document.getElementById('member-list');
@@ -1630,7 +1745,7 @@ window.openEditPlaceModal = function(id) {
 
     openModal('place-edit-modal'); 
 }
-function savePlaceDetails() { 
+function savePlaceDetails() {
     if (!currentEditPlaceId) return; 
     const p = currentTripData.days[currentDayIndex].places.find(p => p.id === currentEditPlaceId); 
     if (p) { 
@@ -1644,10 +1759,14 @@ function savePlaceDetails() {
         // 총 비용 업데이트 (지도나 리스트에 표시용)
         p.cost = tempExpenseBuffer.reduce((sum, item) => sum + item.price, 0);
 
-        saveTrip(); 
-        closeModal('place-edit-modal'); 
-        renderPlaceList(); // 리스트 갱신
-        renderBudget();    // 가계부 갱신
+        const day = currentTripData.days[currentDayIndex];
+        day.places = sortPlacesByTime(day.places);
+        saveTrip();
+        closeModal('place-edit-modal');
+        renderTripInsights();
+        renderPlaceList();
+        renderMap();
+        renderBudget();
     } 
 }
 
@@ -1904,7 +2023,18 @@ async function copyInviteLink() {
     }
     showSuccess("초대 링크를 복사했습니다!");
 }
-function redirectToBooking() { const places = currentTripData.days[currentDayIndex].places; if (places.length === 0) return; const lastPlace = places[places.length - 1]; const query = encodeURIComponent(`${currentTripData.destination} ${lastPlace.name} ticket`); window.open(`https://www.google.com/search?q=${query}`, '_blank'); }
+function redirectToBooking() {
+    if (!currentRouteContext) return showError('먼저 지도 위 이동경로의 INFO를 눌러주세요.');
+    const { origin, destination } = currentRouteContext;
+    const departure = getTransitDepartureInfo(origin.time);
+    const url = new URL('https://www.google.com/maps/dir/');
+    url.searchParams.set('api', '1');
+    url.searchParams.set('origin', `${origin.location.lat},${origin.location.lng}`);
+    url.searchParams.set('destination', `${destination.location.lat},${destination.location.lng}`);
+    url.searchParams.set('travelmode', 'transit');
+    url.searchParams.set('dir_action', 'navigate');
+    window.open(url.toString(), '_blank', 'noopener');
+}
 
 function openModal(id) {
     const modal = document.getElementById(id);

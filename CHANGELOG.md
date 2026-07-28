@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.1.0 - 2026-07-28
+
+### Fixed
+
+- Newly added places now move immediately into chronological order instead of always remaining at the bottom.
+- Editing a place time also re-sorts the day and redraws the route.
+- Tablet-sized windows keep the planner and map side by side instead of unexpectedly dropping the map below the entire planner.
+
+### Added
+
+- Transit lookup now uses the selected trip day and the origin place time when the date is in the future.
+- Route details now parse vehicle type, bus/train line number, full line name, headsign, trip number, boarding and arrival stops, stop coordinates, departure and arrival times, stop count, headway, agency, transfers, distance, warnings, and real fare when Google supplies it.
+- Boarding and arrival stops link directly to their exact Google Maps coordinates.
+- A route-specific Google Maps directions button replaces the unrelated ticket search.
+- Focused unit tests cover chronological ordering, trip-date calculation, past-time fallback, and transit response parsing.
+
+### Improved
+
+- Rebuilt the route sheet with a compact summary, visual journey timeline, alternative driving/walking cards, official warnings, and responsive mobile layout.
+- Removed the hard-coded yen taxi estimate; Plany now avoids presenting fabricated local prices.
+- The planner header now shows the selected date and destination, and the internal tabs use clearer icons.
+- On phones, the live map moves directly below the trip header and above the planning controls.
+
+### Technical note
+
+- Route calculation now prefers the modern Google Maps JavaScript `Route.computeRoutes` API. If the Routes API is not enabled for the configured Google Cloud project, Plany automatically falls back to the existing `DirectionsService` adapter so route drawing and detail sheets continue to work.
+
 ## 2.0.0 - 2026-07-28
 
 ### Added

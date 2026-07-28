@@ -88,8 +88,8 @@
     <div id="planner-screen" class="screen">
         <div class="sidebar">
             <div class="sidebar-header">
-                <button id="back-to-dashboard" class="btn-icon"><i class="fas fa-arrow-left"></i></button>
-                <h2 id="planner-title">여행 제목</h2>
+                <button id="back-to-dashboard" class="btn-icon planner-back" aria-label="여행 목록으로 돌아가기"><i class="fas fa-arrow-left"></i></button>
+                <div class="planner-heading"><h2 id="planner-title">여행 제목</h2><p id="planner-subtitle">여행 일정</p></div>
             </div>
             
             <div id="weather-widget" class="weather-widget">
@@ -99,10 +99,10 @@
 
 
             <div class="menu-tabs">
-                <button class="tab-btn active" onclick="switchTab('plan')">일정</button>
-                <button class="tab-btn" onclick="switchTab('budget')">가계부</button>
-                <button class="tab-btn" onclick="switchTab('checklist')">체크리스트</button>
-                <button class="tab-btn" onclick="switchTab('social')">멤버</button>
+                <button class="tab-btn active" onclick="switchTab('plan')"><i class="fas fa-calendar-day"></i><span>일정</span></button>
+                <button class="tab-btn" onclick="switchTab('budget')"><i class="fas fa-wallet"></i><span>가계부</span></button>
+                <button class="tab-btn" onclick="switchTab('checklist')"><i class="fas fa-list-check"></i><span>체크리스트</span></button>
+                <button class="tab-btn" onclick="switchTab('social')"><i class="fas fa-user-group"></i><span>멤버</span></button>
             </div>
 
 
@@ -319,9 +319,9 @@
     <div id="route-detail-modal" class="modal">
         <div class="modal-content route-content">
             <span class="close-modal" onclick="closeModal('route-detail-modal')">&times;</span>
-            <h3>🚗 이동 정보</h3>
-            <div id="route-comparison" style="margin-top:20px;"></div>
-            <div class="modal-actions" style="margin-top:15px;"><button type="button" class="btn-secondary full-width" data-close-modal="route-detail-modal">닫기</button><button id="book-ticket-btn" class="btn-success full-width">관련 사이트 이동</button></div>
+            <div class="route-modal-heading"><span><i class="fas fa-route"></i></span><div><small>이동경로 상세</small><h3 id="route-modal-title">두 장소 사이 이동</h3><p id="route-modal-date"></p></div></div>
+            <div id="route-comparison" class="route-comparison"></div>
+            <div class="modal-actions route-modal-actions"><button type="button" class="btn-secondary full-width" data-close-modal="route-detail-modal">닫기</button><button id="book-ticket-btn" class="btn-primary full-width"><i class="fas fa-diamond-turn-right"></i> Google 지도에서 길찾기</button></div>
         </div>
     </div>
 
