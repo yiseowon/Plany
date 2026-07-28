@@ -36,6 +36,8 @@ import {
     validateTripDraft
 } from "./js/core.js";
 import { createDateRangePicker } from "./js/date-picker.js";
+import { createTimePicker } from "./js/time-picker.js";
+import { initializeAds } from "./js/ads.js";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -59,6 +61,13 @@ let unsubscribeTrips = null;
 let unsubscribeCurrentTrip = null;
 let lastCenteredTripKey = null;
 let dateRangePicker = null;
+let timePicker = null;
+let pendingInviteTripId = null;
+let appEntryInProgress = false;
+let profileExists = false;
+
+const AGREEMENT_VERSIONS = Object.freeze({ terms: '2.0', privacy: '2.0' });
+const AGREEMENT_STORAGE_KEY = 'plany.requiredAgreement.v2';
 
 let mapMarkers = [];
 let mapPolylines = [];
@@ -167,6 +176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     addListener('google-login-btn', 'click', handleLogin);
+    document.querySelectorAll('[data-start-plany]').forEach((button) => button.addEventListener('click', handleLogin));
     addListener('logout-btn', 'click', handleLogout); 
     addListener('create-new-trip-btn', 'click', openCreateTripModal);
     addListener('trip-form', 'submit', createNewTrip);
@@ -183,6 +193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     addListener('save-profile-btn', 'click', saveUserProfile);
     addListener('profile-file-input', 'change', handleProfileImagePreview);
+    addListener('cancel-profile-btn', 'click', cancelProfileSetup);
     
     addListener('my-location-btn', 'click', handleMyLocation);
 
@@ -192,29 +203,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     linkDateRange('start-date', 'end-date');
     linkDateRange('setting-start-date', 'setting-end-date');
     dateRangePicker = createDateRangePicker({ onError: showError });
+    timePicker = createTimePicker();
+    timePicker.syncAll();
+    initConsentFlow();
+    initModalControls();
+    addListener('open-privacy-settings', 'click', () => openModal('privacy-settings-modal'));
+    initializeAds(CONFIG.ADSENSE || {});
 
     initLocationSelectors();
     setPersistence(auth, browserLocalPersistence).catch((e) => console.warn('Auth persistence setup failed:', e));
     getRedirectResult(auth).catch((e) => showError(formatAuthError(e)));
 
     const urlParams = new URLSearchParams(window.location.search);
-    const inviteTripId = urlParams.get('invite');
+    pendingInviteTripId = urlParams.get('invite');
 
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
-            const profileReady = await checkUserProfile(user);
-            if (!profileReady) return;
-
-            if (inviteTripId) {
-                await joinTrip(inviteTripId);
-                window.history.replaceState({}, document.title, window.location.pathname);
-            } else {
-                showScreen('dashboard-screen');
-            }
-            
-            loadUserTrips();
-            if(!map) initMapLibrary();
+            if (!await ensureRequiredAgreement(user)) return;
+            await enterAuthenticatedApp(user);
         } else {
             unsubscribeTrips?.();
             unsubscribeCurrentTrip?.();
@@ -333,6 +340,14 @@ function openCreateTripModal() {
 }
 
 async function handleLogin() { 
+    if (!hasCurrentLocalAgreement()) {
+        openConsentModal();
+        return;
+    }
+    await startGoogleLogin();
+}
+
+async function startGoogleLogin() {
     try {
         await setPersistence(auth, browserLocalPersistence);
         await signInWithPopup(auth, provider);
@@ -344,6 +359,120 @@ async function handleLogin() {
         }
         showError(formatAuthError(e));
     } 
+}
+
+function getLocalAgreement() {
+    try { return JSON.parse(localStorage.getItem(AGREEMENT_STORAGE_KEY) || 'null'); }
+    catch { return null; }
+}
+
+function hasCurrentLocalAgreement() {
+    const value = getLocalAgreement();
+    return value?.termsVersion === AGREEMENT_VERSIONS.terms && value?.privacyVersion === AGREEMENT_VERSIONS.privacy;
+}
+
+function recordLocalAgreement() {
+    const agreement = { termsVersion: AGREEMENT_VERSIONS.terms, privacyVersion: AGREEMENT_VERSIONS.privacy, acceptedAt: new Date().toISOString() };
+    localStorage.setItem(AGREEMENT_STORAGE_KEY, JSON.stringify(agreement));
+    return agreement;
+}
+
+async function persistAgreement(user, localAgreement = getLocalAgreement()) {
+    if (!user || !localAgreement) return;
+    await setDoc(doc(db, 'userAgreements', user.uid), {
+        uid: user.uid,
+        termsVersion: AGREEMENT_VERSIONS.terms,
+        privacyVersion: AGREEMENT_VERSIONS.privacy,
+        acceptedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    }, { merge: true });
+}
+
+async function ensureRequiredAgreement(user) {
+    try {
+        const snapshot = await getDoc(doc(db, 'userAgreements', user.uid));
+        const saved = snapshot.data();
+        if (saved?.termsVersion === AGREEMENT_VERSIONS.terms && saved?.privacyVersion === AGREEMENT_VERSIONS.privacy) {
+            if (!hasCurrentLocalAgreement()) recordLocalAgreement();
+            return true;
+        }
+        if (hasCurrentLocalAgreement()) {
+            await persistAgreement(user);
+            return true;
+        }
+    } catch (error) {
+        console.warn('Agreement status lookup failed:', error);
+        if (hasCurrentLocalAgreement()) return true;
+    }
+    showScreen('login-screen');
+    openConsentModal();
+    return false;
+}
+
+function initConsentFlow() {
+    const all = document.getElementById('consent-all');
+    const terms = document.getElementById('consent-terms');
+    const privacy = document.getElementById('consent-privacy');
+    const accept = document.getElementById('accept-consent-btn');
+    const sync = () => {
+        const ready = Boolean(terms?.checked && privacy?.checked);
+        if (all) all.checked = ready;
+        if (accept) accept.disabled = !ready;
+    };
+    all?.addEventListener('change', () => { terms.checked = all.checked; privacy.checked = all.checked; sync(); });
+    terms?.addEventListener('change', sync);
+    privacy?.addEventListener('change', sync);
+    document.querySelectorAll('[data-consent-cancel]').forEach((button) => button.addEventListener('click', cancelConsent));
+    accept?.addEventListener('click', async () => {
+        if (!terms.checked || !privacy.checked) return;
+        const agreement = recordLocalAgreement();
+        closeModal('consent-modal', true);
+        if (currentUser) {
+            try {
+                await persistAgreement(currentUser, agreement);
+                await enterAuthenticatedApp(currentUser);
+            } catch (error) { showError('동의 내용을 저장하지 못했습니다. 잠시 후 다시 시도해주세요.'); }
+        } else {
+            await startGoogleLogin();
+        }
+    });
+}
+
+function openConsentModal() {
+    const terms = document.getElementById('consent-terms');
+    const privacy = document.getElementById('consent-privacy');
+    const all = document.getElementById('consent-all');
+    if (terms) terms.checked = false;
+    if (privacy) privacy.checked = false;
+    if (all) all.checked = false;
+    const accept = document.getElementById('accept-consent-btn');
+    if (accept) accept.disabled = true;
+    openModal('consent-modal');
+}
+
+async function cancelConsent() {
+    closeModal('consent-modal', true);
+    if (currentUser) await signOut(auth);
+    currentUser = null;
+    showScreen('login-screen');
+}
+
+async function enterAuthenticatedApp(user) {
+    if (appEntryInProgress || !user) return;
+    appEntryInProgress = true;
+    try {
+        const profileReady = await checkUserProfile(user);
+        if (!profileReady) return;
+        if (pendingInviteTripId) {
+            await joinTrip(pendingInviteTripId);
+            pendingInviteTripId = null;
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+            showScreen('dashboard-screen');
+        }
+        loadUserTrips();
+        if (!map) initMapLibrary();
+    } finally { appEntryInProgress = false; }
 }
 
 function formatAuthError(error) {
@@ -390,6 +519,7 @@ async function checkUserProfile(user) {
     }
 
     if (!docSnap.exists()) {
+        profileExists = false;
         const nickInput = document.getElementById('profile-nickname');
         const prevImg = document.getElementById('profile-preview');
         const defaultImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6Ii8+PC9zdmc+';
@@ -399,9 +529,18 @@ async function checkUserProfile(user) {
         
         openModal('profile-modal');
     } else {
+        profileExists = true;
         updateDashboardProfile(docSnap.data());
     }
     return true;
+}
+
+async function cancelProfileSetup() {
+    closeModal('profile-modal');
+    if (!profileExists) {
+        await signOut(auth);
+        showScreen('login-screen');
+    }
 }
 
 async function saveUserProfile() {
@@ -415,10 +554,12 @@ async function saveUserProfile() {
             uid: currentUser.uid,
             email: currentUser.email,
             displayName: nickname,
-            photoURL: imgSrc
+            photoURL: imgSrc,
+            updatedAt: serverTimestamp()
         }, { merge: true });
         
         closeModal('profile-modal');
+        profileExists = true;
         updateDashboardProfile({ displayName: nickname, photoURL: imgSrc });
         showSuccess("프로필이 저장되었습니다!");
     } catch(e) {
@@ -1286,7 +1427,8 @@ function handlePlaceSearch(e) {
 function initiateAddPlace(p) { 
     tempPlaceData = p; 
     document.getElementById('selected-place-name').innerText = p.displayName; 
-    document.getElementById('new-place-time').value = "10:00"; 
+    document.getElementById('new-place-time').value = "10:00";
+    timePicker?.syncAll();
     openModal('time-selection-modal'); 
     document.getElementById('search-results').classList.remove('active'); 
     document.getElementById('search-results-header').style.display = 'none';
@@ -1462,7 +1604,8 @@ window.openEditPlaceModal = function(id) {
     if (!p) return; 
 
     document.getElementById('edit-place-name').value = p.name; 
-    document.getElementById('edit-place-time').value = p.time; 
+    document.getElementById('edit-place-time').value = p.time;
+    timePicker?.syncAll();
     document.getElementById('edit-place-memo').value = p.memo || ''; 
     
     // 기존 데이터에 expenseItems가 없으면(옛날 데이터) cost 기반으로 하나 만들어줌
@@ -1763,8 +1906,38 @@ async function copyInviteLink() {
 }
 function redirectToBooking() { const places = currentTripData.days[currentDayIndex].places; if (places.length === 0) return; const lastPlace = places[places.length - 1]; const query = encodeURIComponent(`${currentTripData.destination} ${lastPlace.name} ticket`); window.open(`https://www.google.com/search?q=${query}`, '_blank'); }
 
-function openModal(id) { document.getElementById(id).classList.add('active'); }
-window.closeModal = (id) => document.getElementById(id).classList.remove('active');
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => modal.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])')?.focus());
+}
+
+function closeModal(id, force = false) {
+    const modal = document.getElementById(id);
+    if (!modal || (modal.dataset.modalBlocking === 'true' && !force)) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    if (!document.querySelector('.modal.active')) document.body.classList.remove('modal-open');
+}
+window.closeModal = closeModal;
+
+function initModalControls() {
+    document.querySelectorAll('[data-close-modal]').forEach((button) => button.addEventListener('click', () => closeModal(button.dataset.closeModal)));
+    document.querySelectorAll('.modal:not(#date-picker-modal):not(#time-picker-modal)').forEach((modal) => modal.addEventListener('click', (event) => {
+        if (event.target === modal && modal.dataset.modalBlocking !== 'true') closeModal(modal.id);
+    }));
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const active = [...document.querySelectorAll('.modal.active')].at(-1);
+        if (!active || active.dataset.modalBlocking === 'true') return;
+        if (active.id === 'date-picker-modal') dateRangePicker?.close?.();
+        else if (active.id === 'time-picker-modal') timePicker?.close?.();
+        else closeModal(active.id);
+    });
+}
 function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 
 

@@ -242,5 +242,5 @@ export function createDateRangePicker({ onError = () => {} } = {}) {
     });
 
     syncAll();
-    return { syncAll, syncControl };
+    return { syncAll, syncControl, close: closePicker };
 }

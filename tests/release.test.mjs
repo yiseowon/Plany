@@ -30,6 +30,22 @@ test('does not contain duplicate static HTML ids', () => {
     assert.deepEqual(duplicates, []);
 });
 
+test('keeps advertising disabled without a valid configuration', () => {
+    const html = read('index.html');
+    const ads = read('js/ads.js');
+    assert.match(html, /data-ad-slot="" hidden/);
+    assert.match(ads, /if \(!config\.enabled/);
+    assert.match(ads, /CLIENT_PATTERN\.test/);
+    assert.doesNotMatch(html, /ca-pub-\d+/);
+});
+
+test('requires versioned terms and privacy agreement before sign-in', () => {
+    const app = read('app.js');
+    assert.match(app, /AGREEMENT_VERSIONS/);
+    assert.match(app, /acceptedAt:\s*serverTimestamp\(\)/);
+    assert.match(app, /if \(!hasCurrentLocalAgreement\(\)\)/);
+});
+
 test('uses server timestamps and includes the route marker implementation', () => {
     const app = read('app.js');
     assert.match(app, /createdAt:\s*serverTimestamp\(\)/);
@@ -44,6 +60,9 @@ test('preserves trip ownership and restricts membership updates in rules', () =>
     assert.match(rules, /resource\.data\.owner in request\.resource\.data\.members/);
     assert.match(rules, /keepsMembers\(\) \|\| ownerUpdatesMembers\(\)/);
     assert.match(rules, /request\.resource\.data\.members\.size\(\) == 1/);
+    assert.match(rules, /match \/userAgreements\/\{userId\}/);
+    assert.match(rules, /allow get, create, update: if signedIn\(\) && request\.auth\.uid == userId/);
+    assert.match(rules, /allow list, delete: if false/);
 });
 
 test('does not ship private keys or repository access tokens', () => {

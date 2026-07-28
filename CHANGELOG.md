@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.0.0 - 2026-07-28
+
+### Added
+
+- A completely redesigned public landing page with a clear product story, feature overview, and original travel planning guide.
+- Versioned first-use agreement for the terms and privacy policy, recorded both locally and in the signed-in user document.
+- Draft service terms, privacy policy, and advertising/cookie notice for pre-launch legal review.
+- A large iPhone-style time picker with quick time presets and five-minute controls.
+- AdSense-ready ad containers and a guarded loader that stays entirely disabled until valid publisher and slot IDs are configured.
+- A privacy and advertising settings panel that clearly reports the current no-ad state.
+
+### Improved
+
+- Renamed ambiguous date shortcuts to “오늘부터 3박 4일” and “오늘부터 일주일”.
+- Added visible cancel or close actions to every major dialog.
+- Standardized Escape-key and backdrop dismissal for non-blocking dialogs.
+- Made consent and new-profile cancellation end the sign-in flow instead of trapping the user.
+
+### Safety
+
+- No live advertising script, cookie, or publisher identifier ships in the default configuration.
+- Agreement history is stored outside shared profile documents under owner-only Firestore rules.
+- Legal pages remain explicitly marked as drafts until operator and privacy-contact details are supplied and reviewed.
+
 ## 1.3.0 - 2026-07-28
 
 ### Added
