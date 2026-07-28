@@ -150,10 +150,12 @@
 
                 <div class="form-group">
                     <label><i class="far fa-calendar"></i> 여행 기간</label>
-                    <div class="date-row">
-                        <div class="date-field"><span>출발</span><input type="date" id="start-date" class="form-input" required></div>
+                    <div class="date-row date-range-control" data-date-range data-start-id="start-date" data-end-id="end-date">
+                        <button type="button" class="date-field" data-date-role="start"><span>출발</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 시작일</small></button>
                         <i class="fas fa-arrow-right date-arrow"></i>
-                        <div class="date-field"><span>도착</span><input type="date" id="end-date" class="form-input" required></div>
+                        <button type="button" class="date-field" data-date-role="end"><span>도착</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 마지막 날</small></button>
+                        <input type="hidden" id="start-date">
+                        <input type="hidden" id="end-date">
                     </div>
                 </div>
                 <button type="submit" class="btn-primary full-width">생성하기</button>
@@ -169,7 +171,16 @@
             <form id="trip-settings-form">
                 <input type="hidden" id="setting-trip-id">
                 <div class="form-group"><label><i class="fas fa-pen"></i> 여행 제목</label><input type="text" id="setting-title" class="form-input" required></div>
-                <div class="form-group"><label><i class="far fa-calendar"></i> 여행 기간</label><div class="date-row"><div class="date-field"><span>출발</span><input type="date" id="setting-start-date" class="form-input" required></div><i class="fas fa-arrow-right date-arrow"></i><div class="date-field"><span>도착</span><input type="date" id="setting-end-date" class="form-input" required></div></div></div>
+                <div class="form-group">
+                    <label><i class="far fa-calendar"></i> 여행 기간</label>
+                    <div class="date-row date-range-control" data-date-range data-start-id="setting-start-date" data-end-id="setting-end-date">
+                        <button type="button" class="date-field" data-date-role="start"><span>출발</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 시작일</small></button>
+                        <i class="fas fa-arrow-right date-arrow"></i>
+                        <button type="button" class="date-field" data-date-role="end"><span>도착</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 마지막 날</small></button>
+                        <input type="hidden" id="setting-start-date">
+                        <input type="hidden" id="setting-end-date">
+                    </div>
+                </div>
                 <p class="form-warning"><i class="fas fa-circle-info"></i> 기간을 줄이면 제외되는 날짜의 일정이 삭제될 수 있어요.</p>
                 <div class="modal-actions">
                     <button type="button" id="btn-delete-trip" class="btn-danger-soft full-width">여행 삭제</button>
@@ -277,12 +288,50 @@
     </div>
 
 
-    <div id="common-modal" class="modal" style="z-index: 3000;">
+    <div id="common-modal" class="modal" style="z-index: 4000;">
         <div class="modal-content" style="text-align: center; max-width: 350px;">
             <div id="common-modal-icon" style="font-size: 3rem; margin-bottom: 15px;"></div>
             <h3 id="common-modal-title" style="margin-bottom: 10px;">알림</h3>
             <p id="common-modal-msg" style="color: #666; margin-bottom: 25px; line-height: 1.5;"></p>
             <div id="common-modal-actions" style="display: flex; gap: 10px; justify-content: center;"></div>
+        </div>
+    </div>
+
+    <div id="date-picker-modal" class="modal date-picker-modal" role="dialog" aria-modal="true" aria-labelledby="date-picker-title">
+        <div class="date-picker-sheet">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="date-picker-header">
+                <div>
+                    <span class="date-picker-eyebrow">여행 기간</span>
+                    <h2 id="date-picker-title">날짜 선택</h2>
+                </div>
+                <button type="button" class="date-picker-close" data-date-close aria-label="날짜 선택 닫기"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="date-selection-summary">
+                <div data-date-summary="start"><span>출발</span><strong>선택 전</strong></div>
+                <i class="fas fa-arrow-right"></i>
+                <div data-date-summary="end"><span>도착</span><strong>선택 전</strong></div>
+            </div>
+            <p id="date-picker-guide" class="date-picker-guide" aria-live="polite">출발일을 선택해주세요.</p>
+            <div class="date-presets" aria-label="빠른 기간 선택">
+                <button type="button" data-date-preset="today">오늘</button>
+                <button type="button" data-date-preset="weekend">이번 주말</button>
+                <button type="button" data-date-preset="3n4d">3박 4일</button>
+                <button type="button" data-date-preset="week">일주일</button>
+            </div>
+            <div class="calendar-card">
+                <div class="calendar-toolbar">
+                    <button type="button" data-calendar-nav="prev" aria-label="이전 달"><i class="fas fa-chevron-left"></i></button>
+                    <strong id="calendar-month-label"></strong>
+                    <button type="button" data-calendar-nav="next" aria-label="다음 달"><i class="fas fa-chevron-right"></i></button>
+                </div>
+                <div class="calendar-weekdays" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+                <div id="calendar-grid" class="calendar-grid" role="grid" aria-label="날짜 달력"></div>
+            </div>
+            <div class="date-picker-actions">
+                <button type="button" class="btn-date-cancel" data-date-close>취소</button>
+                <button type="button" class="btn-date-apply" id="date-picker-apply">이 날짜로 선택</button>
+            </div>
         </div>
     </div>
 

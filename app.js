@@ -35,6 +35,7 @@ import {
     validateTripDateRange,
     validateTripDraft
 } from "./js/core.js";
+import { createDateRangePicker } from "./js/date-picker.js";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -57,6 +58,7 @@ let sortableInstance = null;
 let unsubscribeTrips = null;
 let unsubscribeCurrentTrip = null;
 let lastCenteredTripKey = null;
+let dateRangePicker = null;
 
 let mapMarkers = [];
 let mapPolylines = [];
@@ -189,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     linkDateRange('start-date', 'end-date');
     linkDateRange('setting-start-date', 'setting-end-date');
+    dateRangePicker = createDateRangePicker({ onError: showError });
 
     initLocationSelectors();
     setPersistence(auth, browserLocalPersistence).catch((e) => console.warn('Auth persistence setup failed:', e));
@@ -323,6 +326,7 @@ function openCreateTripModal() {
     tempDestinations = [];
     renderDestinationTags();
     document.getElementById('trip-form').reset();
+    dateRangePicker?.syncAll();
     document.getElementById('select-region').innerHTML = '<option value="">지역 선택</option>';
     document.getElementById('select-region').disabled = true;
     openModal('setup-modal');
@@ -565,6 +569,7 @@ window.openTripSettings = async function(tripId) {
         document.getElementById('setting-start-date').value = data.startDate;
         document.getElementById('setting-end-date').value = data.endDate;
         document.getElementById('setting-end-date').min = data.startDate;
+        dateRangePicker?.syncAll();
         openModal('trip-settings-modal');
     }
 }

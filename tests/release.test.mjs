@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { APP_VERSION } from '../js/core.js';
@@ -44,4 +44,24 @@ test('preserves trip ownership and restricts membership updates in rules', () =>
     assert.match(rules, /resource\.data\.owner in request\.resource\.data\.members/);
     assert.match(rules, /keepsMembers\(\) \|\| ownerUpdatesMembers\(\)/);
     assert.match(rules, /request\.resource\.data\.members\.size\(\) == 1/);
+});
+
+test('does not ship private keys or repository access tokens', () => {
+    const files = [];
+    const visit = (directory) => {
+        for (const entry of readdirSync(directory)) {
+            if (entry === '.git' || entry === 'node_modules') continue;
+            const path = resolve(directory, entry);
+            if (statSync(path).isDirectory()) visit(path);
+            else if (statSync(path).size < 1_000_000) files.push(path);
+        }
+    };
+    visit(root);
+    const forbidden = new RegExp([
+        '-----BEGIN ', '(?:RSA |EC |OPENSSH )?', 'PRIVATE KEY-----',
+        '|gh', '[pousr]_[0-9A-Za-z]{20,}',
+        '|AK', 'IA[0-9A-Z]{16}',
+    ].join(''));
+    const findings = files.filter((path) => forbidden.test(readFileSync(path, 'utf8')));
+    assert.deepEqual(findings, []);
 });

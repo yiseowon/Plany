@@ -7,8 +7,9 @@
 - Hosting: GitHub Pages (`www.plany.life`)
 - Authentication / Firestore: Firebase project `maps-5fe2c`
 - Google Maps Platform: Google Cloud project `maps-481116`
-- Current source version: `1.2.0`
-- Patch notes: [`docs/PATCH_NOTES_1.2.0.md`](docs/PATCH_NOTES_1.2.0.md)
+- Current source version: `1.3.0`
+- Patch notes: [`1.3.0`](docs/PATCH_NOTES_1.3.0.md) · [`1.2.0`](docs/PATCH_NOTES_1.2.0.md)
+- Security checklist: [`SECURITY.md`](SECURITY.md)
 
 ## 로컬 확인
 
