@@ -4,22 +4,67 @@
     <meta charset="UTF-8">
     <title>Plany</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="style.css?v=2.3.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 </head>
 <body>
 
 
-    <div id="login-screen" class="screen active">
-        <div class="center-box">
-            <div class="app-mark"><i class="fas fa-location-dot"></i></div>
-            <h1>Plany</h1>
-            <p>친구와 함께 만드는 스마트한 여행</p>
-            <button id="google-login-btn" class="btn-google">
-                <i class="fab fa-google"></i> Google 계정으로 시작
-            </button>
-        </div>
+    <div id="login-screen" class="screen active landing-screen">
+        <nav class="landing-nav" aria-label="메인 메뉴">
+            <a class="landing-brand" href="#landing-top" aria-label="Plany 홈"><span><i class="fas fa-location-dot"></i></span>Plany</a>
+            <div class="landing-nav-links"><a href="#landing-features">기능</a><a href="#landing-guide">여행 팁</a><button type="button" class="nav-start-btn" data-start-plany>무료로 시작</button></div>
+        </nav>
+        <main id="landing-top" class="landing-main">
+            <section class="landing-hero">
+                <div class="hero-copy">
+                    <span class="hero-kicker"><i class="fas fa-sparkles"></i> 함께 만드는 여행 플래너</span>
+                    <h1>계획은 가볍게,<br><em>여행은 더 선명하게.</em></h1>
+                    <p>일정, 지도, 비용, 준비물을 하나에 담고 친구와 실시간으로 맞춰보세요.</p>
+                    <div class="hero-actions">
+                        <button id="google-login-btn" class="btn-google hero-start-btn"><i class="fab fa-google"></i> Google로 무료 시작</button>
+                        <a href="#landing-guide" class="hero-link">먼저 둘러보기 <i class="fas fa-arrow-down"></i></a>
+                    </div>
+                    <div class="hero-trust"><span><i class="fas fa-shield-halved"></i> 비밀번호를 저장하지 않아요</span><span><i class="fas fa-user-group"></i> 초대 링크로 간편 협업</span></div>
+                </div>
+                <div class="hero-preview" aria-label="Plany 일정 화면 미리보기">
+                    <div class="preview-top"><span class="preview-dot"></span><strong>도쿄 3박 4일</strong><span class="preview-people"><i class="fas fa-user"></i> 3</span></div>
+                    <div class="preview-days"><b>DAY 1</b><span>DAY 2</span><span>DAY 3</span><span>DAY 4</span></div>
+                    <div class="preview-route">
+                        <div><span class="route-number">1</span><p><strong>아사쿠사</strong><small>10:00 · 산책</small></p></div>
+                        <i class="route-line"></i>
+                        <div><span class="route-number">2</span><p><strong>우에노 공원</strong><small>13:30 · 벚꽃 명소</small></p></div>
+                        <i class="route-line"></i>
+                        <div><span class="route-number">3</span><p><strong>시부야 스카이</strong><small>18:20 · 일몰</small></p></div>
+                    </div>
+                    <div class="preview-budget"><span>오늘 예상 비용</span><strong>₩ 84,000</strong></div>
+                </div>
+            </section>
+
+            <section id="landing-features" class="landing-section">
+                <div class="section-heading"><span>한 곳에서 끝내기</span><h2>여행 준비에 필요한 것만<br>깔끔하게 모았습니다.</h2></div>
+                <div class="feature-grid">
+                    <article><i class="fas fa-route"></i><h3>지도와 일정 연결</h3><p>장소 순서와 이동 동선을 한 화면에서 확인하고 하루 계획을 정리합니다.</p></article>
+                    <article><i class="fas fa-wallet"></i><h3>비용 자동 정산</h3><p>누가 함께 쓴 비용인지 기록하면 사람별 부담금을 바로 계산합니다.</p></article>
+                    <article><i class="fas fa-list-check"></i><h3>공동 체크리스트</h3><p>준비물과 사고 싶은 것을 함께 적고 완료 상태를 실시간으로 맞춥니다.</p></article>
+                </div>
+            </section>
+
+            <section id="landing-guide" class="landing-section guide-section">
+                <div class="section-heading"><span>Plany 여행 노트</span><h2>좋은 일정은 여백에서 시작됩니다.</h2><p>광고보다 먼저, 실제 여행에 도움이 되는 내용을 꾸준히 쌓아가겠습니다.</p></div>
+                <div class="guide-grid">
+                    <article><span>01</span><h3>하루 핵심 장소는 3~5곳</h3><p>이동 시간을 포함하면 생각보다 하루가 짧습니다. 꼭 가고 싶은 곳을 먼저 배치하고 주변 장소를 더하세요.</p></article>
+                    <article><span>02</span><h3>식사와 휴식을 일정으로</h3><p>맛집만 저장하지 말고 실제 식사 시간과 카페 휴식을 넣으면 지키기 쉬운 일정이 됩니다.</p></article>
+                    <article><span>03</span><h3>일행과 비용 기준 먼저 정하기</h3><p>공동 비용과 개인 비용의 기준을 출발 전에 맞추면 여행 중 계산 스트레스를 크게 줄일 수 있습니다.</p></article>
+                </div>
+            </section>
+            <aside class="ad-container" data-ad-slot="" hidden aria-label="광고"><span>광고</span></aside>
+
+            <section class="landing-cta"><div><span>다음 여행이 있다면</span><h2>지금 한 장의 계획으로 시작하세요.</h2></div><button type="button" data-start-plany><i class="fab fa-google"></i> 무료로 시작하기</button></section>
+        </main>
+        <footer class="landing-footer"><a class="landing-brand" href="#landing-top"><span><i class="fas fa-location-dot"></i></span>Plany</a><p>친구와 함께 만드는 여행 계획</p><div><a href="legal/terms.html" target="_blank" rel="noopener">이용약관</a><a href="legal/privacy.html" target="_blank" rel="noopener">개인정보처리방침</a><a href="legal/ads.html" target="_blank" rel="noopener">광고·쿠키 안내</a><button type="button" id="open-privacy-settings">개인정보 설정</button></div></footer>
     </div>
 
 
@@ -32,6 +77,7 @@
                 </div>
             </header>
             <div class="trip-list" id="trip-list"></div>
+            <aside class="ad-container dashboard-ad" data-ad-slot="" hidden aria-label="광고"><span>광고</span></aside>
             <button id="create-new-trip-btn" class="floating-btn">
                 <i class="fas fa-plus"></i> 새 여행
             </button>
@@ -42,8 +88,8 @@
     <div id="planner-screen" class="screen">
         <div class="sidebar">
             <div class="sidebar-header">
-                <button id="back-to-dashboard" class="btn-icon"><i class="fas fa-arrow-left"></i></button>
-                <h2 id="planner-title">여행 제목</h2>
+                <button id="back-to-dashboard" class="btn-icon planner-back" aria-label="여행 목록으로 돌아가기"><i class="fas fa-arrow-left"></i></button>
+                <div class="planner-heading"><h2 id="planner-title">여행 제목</h2><p id="planner-subtitle">여행 일정</p></div>
             </div>
             
             <div id="weather-widget" class="weather-widget">
@@ -53,10 +99,10 @@
 
 
             <div class="menu-tabs">
-                <button class="tab-btn active" onclick="switchTab('plan')">일정</button>
-                <button class="tab-btn" onclick="switchTab('budget')">가계부</button>
-                <button class="tab-btn" onclick="switchTab('checklist')">체크리스트</button>
-                <button class="tab-btn" onclick="switchTab('social')">멤버</button>
+                <button class="tab-btn active" onclick="switchTab('plan')"><i class="fas fa-calendar-day"></i><span>일정</span></button>
+                <button class="tab-btn" onclick="switchTab('budget')"><i class="fas fa-wallet"></i><span>가계부</span></button>
+                <button class="tab-btn" onclick="switchTab('checklist')"><i class="fas fa-list-check"></i><span>체크리스트</span></button>
+                <button class="tab-btn" onclick="switchTab('social')"><i class="fas fa-user-group"></i><span>멤버</span></button>
             </div>
 
 
@@ -116,6 +162,10 @@
                 </div>
             </div>
         </div>
+        <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="일정 패널 폭 조절" aria-orientation="vertical" aria-valuemin="340" aria-valuemax="640" aria-valuenow="420" tabindex="0">
+            <span class="sidebar-resizer-grip" aria-hidden="true"></span>
+            <span class="sidebar-resizer-tip" role="tooltip">드래그해서 폭 조절 · 두 번 클릭하면 초기화</span>
+        </div>
         <div class="map-container"><div id="map"></div></div>
     </div>
 
@@ -149,13 +199,15 @@
 
                 <div class="form-group">
                     <label><i class="far fa-calendar"></i> 여행 기간</label>
-                    <div class="date-row">
-                        <div class="date-field"><span>출발</span><input type="date" id="start-date" class="form-input" required></div>
+                    <div class="date-row date-range-control" data-date-range data-start-id="start-date" data-end-id="end-date">
+                        <button type="button" class="date-field" data-date-role="start"><span>출발</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 시작일</small></button>
                         <i class="fas fa-arrow-right date-arrow"></i>
-                        <div class="date-field"><span>도착</span><input type="date" id="end-date" class="form-input" required></div>
+                        <button type="button" class="date-field" data-date-role="end"><span>도착</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 마지막 날</small></button>
+                        <input type="hidden" id="start-date">
+                        <input type="hidden" id="end-date">
                     </div>
                 </div>
-                <button type="submit" class="btn-primary full-width">생성하기</button>
+                <div class="modal-actions modal-actions-end"><button type="button" class="btn-secondary" data-close-modal="setup-modal">취소</button><button type="submit" class="btn-primary">여행 만들기</button></div>
             </form>
         </div>
     </div>
@@ -168,10 +220,20 @@
             <form id="trip-settings-form">
                 <input type="hidden" id="setting-trip-id">
                 <div class="form-group"><label><i class="fas fa-pen"></i> 여행 제목</label><input type="text" id="setting-title" class="form-input" required></div>
-                <div class="form-group"><label><i class="far fa-calendar"></i> 여행 기간</label><div class="date-row"><div class="date-field"><span>출발</span><input type="date" id="setting-start-date" class="form-input" required></div><i class="fas fa-arrow-right date-arrow"></i><div class="date-field"><span>도착</span><input type="date" id="setting-end-date" class="form-input" required></div></div></div>
+                <div class="form-group">
+                    <label><i class="far fa-calendar"></i> 여행 기간</label>
+                    <div class="date-row date-range-control" data-date-range data-start-id="setting-start-date" data-end-id="setting-end-date">
+                        <button type="button" class="date-field" data-date-role="start"><span>출발</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 시작일</small></button>
+                        <i class="fas fa-arrow-right date-arrow"></i>
+                        <button type="button" class="date-field" data-date-role="end"><span>도착</span><strong data-date-value>날짜 선택</strong><small data-date-day>여행 마지막 날</small></button>
+                        <input type="hidden" id="setting-start-date">
+                        <input type="hidden" id="setting-end-date">
+                    </div>
+                </div>
                 <p class="form-warning"><i class="fas fa-circle-info"></i> 기간을 줄이면 제외되는 날짜의 일정이 삭제될 수 있어요.</p>
                 <div class="modal-actions">
                     <button type="button" id="btn-delete-trip" class="btn-danger-soft full-width">여행 삭제</button>
+                    <button type="button" class="btn-secondary full-width" data-close-modal="trip-settings-modal">취소</button>
                     <button type="submit" class="btn-primary full-width">저장</button>
                 </div>
             </form>
@@ -188,7 +250,7 @@
                 <input type="file" id="profile-file-input" accept="image/*" style="display:none">
             </div>
             <div class="form-group"><input type="text" id="profile-nickname" class="form-input" placeholder="닉네임" style="text-align:center;"></div>
-            <button id="save-profile-btn" class="btn-primary">시작하기</button>
+            <div class="modal-actions"><button type="button" class="btn-secondary full-width" id="cancel-profile-btn">취소</button><button id="save-profile-btn" class="btn-primary full-width">저장</button></div>
         </div>
     </div>
 
@@ -198,8 +260,9 @@
             <span class="close-modal" onclick="closeModal('time-selection-modal')">&times;</span>
             <h3 id="selected-place-name" style="margin-bottom:5px;">장소 이름</h3>
             <p style="color:#868e96; font-size:0.9em;">언제 방문하실 예정인가요?</p>
-            <div class="modern-time-picker"><input type="time" id="new-place-time" required></div>
-            <button id="confirm-add-place-btn" class="btn-primary">추가하기</button>
+            <button type="button" class="time-field" data-time-trigger="new-place-time"><span>방문 시간</span><strong data-time-label>오전 10:00</strong><i class="fas fa-chevron-right"></i></button>
+            <input type="hidden" id="new-place-time" value="10:00">
+            <div class="modal-actions"><button type="button" class="btn-secondary full-width" data-close-modal="time-selection-modal">취소</button><button id="confirm-add-place-btn" class="btn-primary full-width">추가</button></div>
         </div>
     </div>
 
@@ -217,7 +280,8 @@
             <div style="display:flex; gap:10px;">
                 <div style="flex:1;">
                     <label>방문 시간</label>
-                    <input type="time" id="edit-place-time" class="form-input">
+                    <button type="button" class="time-field compact" data-time-trigger="edit-place-time"><strong data-time-label>시간 선택</strong><i class="fas fa-chevron-right"></i></button>
+                    <input type="hidden" id="edit-place-time">
                 </div>
                 <div style="flex:2;">
                     <label>메모</label>
@@ -251,7 +315,7 @@
             </button>
         </div>
 
-        <button id="save-place-btn" class="btn-primary full-width" style="margin-top:15px;">저장 완료</button>
+        <div class="modal-actions" style="margin-top:15px;"><button type="button" class="btn-secondary full-width" data-close-modal="place-edit-modal">취소</button><button id="save-place-btn" class="btn-primary full-width">저장</button></div>
     </div>
 </div>
 
@@ -259,9 +323,9 @@
     <div id="route-detail-modal" class="modal">
         <div class="modal-content route-content">
             <span class="close-modal" onclick="closeModal('route-detail-modal')">&times;</span>
-            <h3>🚗 이동 정보</h3>
-            <div id="route-comparison" style="margin-top:20px;"></div>
-            <button id="book-ticket-btn" class="btn-success full-width" style="margin-top:15px;">관련 사이트 이동</button>
+            <div class="route-modal-heading"><span><i class="fas fa-route"></i></span><div><small>이동경로 상세</small><h3 id="route-modal-title">두 장소 사이 이동</h3><p id="route-modal-date"></p></div></div>
+            <div id="route-comparison" class="route-comparison" aria-live="polite"></div>
+            <div class="modal-actions route-modal-actions"><button type="button" class="btn-secondary full-width" data-close-modal="route-detail-modal">닫기</button><button id="book-ticket-btn" class="btn-primary full-width"><i class="fas fa-diamond-turn-right"></i> Google 지도에서 길찾기</button></div>
         </div>
     </div>
 
@@ -272,11 +336,12 @@
             <h3>🌟 주변 명소 추천</h3>
             <p style="color:#868e96; font-size:0.9em; margin-bottom:15px;">지도 중심 반경 2km 내 인기 장소입니다.</p>
             <div id="recommendation-list" style="max-height: 400px; overflow-y: auto; display:flex; flex-direction:column; gap:10px;"></div>
+            <button type="button" class="btn-secondary full-width" data-close-modal="recommendation-modal" style="margin-top:15px;">닫기</button>
         </div>
     </div>
 
 
-    <div id="common-modal" class="modal" style="z-index: 3000;">
+    <div id="common-modal" class="modal" style="z-index: 4000;">
         <div class="modal-content" style="text-align: center; max-width: 350px;">
             <div id="common-modal-icon" style="font-size: 3rem; margin-bottom: 15px;"></div>
             <h3 id="common-modal-title" style="margin-bottom: 10px;">알림</h3>
@@ -285,6 +350,80 @@
         </div>
     </div>
 
+    <div id="consent-modal" class="modal consent-modal" data-modal-blocking="true" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+        <div class="modal-content consent-content">
+            <button type="button" class="close-modal-button" data-consent-cancel aria-label="동의 화면 닫기"><i class="fas fa-times"></i></button>
+            <span class="consent-icon"><i class="fas fa-shield-heart"></i></span>
+            <h2 id="consent-title">시작하기 전에 확인해주세요</h2>
+            <p>Plany는 Google 계정 정보와 여행 데이터를 서비스 제공에 필요한 범위에서 사용합니다.</p>
+            <label class="consent-all"><input type="checkbox" id="consent-all"><span><strong>필수 항목 모두 동의</strong><small>아래 두 항목을 한 번에 선택합니다.</small></span></label>
+            <div class="consent-list">
+                <label><input type="checkbox" id="consent-terms"><span><strong>이용약관 동의 <em>필수</em></strong><small>서비스 이용 규칙과 이용자 책임</small></span><a href="legal/terms.html" target="_blank" rel="noopener" aria-label="이용약관 전문 보기"><i class="fas fa-chevron-right"></i></a></label>
+                <label><input type="checkbox" id="consent-privacy"><span><strong>개인정보 처리방침 확인 <em>필수</em></strong><small>수집 항목, 이용 목적, 보유 기간</small></span><a href="legal/privacy.html" target="_blank" rel="noopener" aria-label="개인정보 처리방침 전문 보기"><i class="fas fa-chevron-right"></i></a></label>
+            </div>
+            <div class="consent-note"><i class="fas fa-circle-info"></i><p>광고 쿠키와 맞춤 광고 동의는 광고 기능 도입 시 Google 인증 동의 관리 화면에서 별도로 선택하게 됩니다.</p></div>
+            <div class="consent-actions"><button type="button" class="btn-secondary" data-consent-cancel>취소</button><button type="button" id="accept-consent-btn" class="btn-primary" disabled>동의하고 계속</button></div>
+        </div>
+    </div>
+
+    <div id="date-picker-modal" class="modal date-picker-modal" role="dialog" aria-modal="true" aria-labelledby="date-picker-title">
+        <div class="date-picker-sheet">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="date-picker-header">
+                <div>
+                    <span class="date-picker-eyebrow">여행 기간</span>
+                    <h2 id="date-picker-title">날짜 선택</h2>
+                </div>
+                <button type="button" class="date-picker-close" data-date-close aria-label="날짜 선택 닫기"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="date-selection-summary">
+                <div data-date-summary="start"><span>출발</span><strong>선택 전</strong></div>
+                <i class="fas fa-arrow-right"></i>
+                <div data-date-summary="end"><span>도착</span><strong>선택 전</strong></div>
+            </div>
+            <p id="date-picker-guide" class="date-picker-guide" aria-live="polite">출발일을 선택해주세요.</p>
+            <div class="date-presets" aria-label="빠른 기간 선택">
+                <button type="button" data-date-preset="today">오늘</button>
+                <button type="button" data-date-preset="weekend">이번 주말</button>
+                <button type="button" data-date-preset="3n4d">오늘부터 3박 4일</button>
+                <button type="button" data-date-preset="week">오늘부터 일주일</button>
+            </div>
+            <div class="calendar-card">
+                <div class="calendar-toolbar">
+                    <button type="button" data-calendar-nav="prev" aria-label="이전 달"><i class="fas fa-chevron-left"></i></button>
+                    <strong id="calendar-month-label"></strong>
+                    <button type="button" data-calendar-nav="next" aria-label="다음 달"><i class="fas fa-chevron-right"></i></button>
+                </div>
+                <div class="calendar-weekdays" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+                <div id="calendar-grid" class="calendar-grid" role="grid" aria-label="날짜 달력"></div>
+            </div>
+            <div class="date-picker-actions">
+                <button type="button" class="btn-date-cancel" data-date-close>취소</button>
+                <button type="button" class="btn-date-apply" id="date-picker-apply">이 날짜로 선택</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="time-picker-modal" class="modal time-picker-modal" role="dialog" aria-modal="true" aria-labelledby="time-picker-title">
+        <div class="time-picker-sheet">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <div class="date-picker-header"><div><span class="date-picker-eyebrow">방문 일정</span><h2 id="time-picker-title">시간 선택</h2></div><button type="button" class="date-picker-close" data-time-close aria-label="시간 선택 닫기"><i class="fas fa-times"></i></button></div>
+            <div class="time-display" aria-live="polite"><span id="time-period">오전</span><strong id="time-display-value">10:00</strong></div>
+            <div class="time-controls">
+                <div><span>시</span><button type="button" data-time-adjust="hour:1"><i class="fas fa-chevron-up"></i></button><strong id="time-hour">10</strong><button type="button" data-time-adjust="hour:-1"><i class="fas fa-chevron-down"></i></button></div>
+                <b>:</b>
+                <div><span>분</span><button type="button" data-time-adjust="minute:5"><i class="fas fa-chevron-up"></i></button><strong id="time-minute">00</strong><button type="button" data-time-adjust="minute:-5"><i class="fas fa-chevron-down"></i></button></div>
+            </div>
+            <div class="time-presets"><button type="button" data-time-value="09:00">아침 9시</button><button type="button" data-time-value="12:00">점심 12시</button><button type="button" data-time-value="15:00">오후 3시</button><button type="button" data-time-value="18:00">저녁 6시</button></div>
+            <div class="date-picker-actions"><button type="button" class="btn-date-cancel" data-time-close>취소</button><button type="button" class="btn-date-apply" id="time-picker-apply">이 시간으로 선택</button></div>
+        </div>
+    </div>
+
+    <div id="privacy-settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="privacy-settings-title">
+        <div class="modal-content privacy-settings-content"><button type="button" class="close-modal-button" data-close-modal="privacy-settings-modal" aria-label="닫기"><i class="fas fa-times"></i></button><span class="consent-icon"><i class="fas fa-cookie-bite"></i></span><h2 id="privacy-settings-title">개인정보·광고 설정</h2><p>현재 Plany에서는 맞춤 광고 코드와 광고 쿠키를 사용하지 않습니다. 광고 기능을 켜는 시점에는 Google 인증 동의 관리 화면에서 선택하거나 철회할 수 있게 됩니다.</p><div class="privacy-link-list"><a href="legal/privacy.html" target="_blank" rel="noopener">개인정보 처리방침 <i class="fas fa-arrow-up-right-from-square"></i></a><a href="legal/ads.html" target="_blank" rel="noopener">광고·쿠키 안내 <i class="fas fa-arrow-up-right-from-square"></i></a></div><button type="button" class="btn-secondary full-width" data-close-modal="privacy-settings-modal">닫기</button></div>
+    </div>
+
+    <div id="app-version" class="app-version" aria-label="Plany 앱 버전"></div>
 
     <script src="config.js"></script>
     <script>
@@ -293,6 +432,6 @@
             v: "weekly",
         });
     </script>
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=2.3.0"></script>
 </body>
 </html>

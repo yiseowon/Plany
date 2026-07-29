@@ -22,10 +22,36 @@ import {
     deleteDoc, 
     onSnapshot, 
     query, 
-    where, 
+    where,
     arrayUnion,
-    arrayRemove 
+    arrayRemove,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+    APP_VERSION,
+    escapeHTML,
+    normalizeText,
+    safeImageUrl,
+    validateTripDateRange,
+    validateTripDraft
+} from "./js/core.js?v=2.3.0";
+import { createDateRangePicker } from "./js/date-picker.js?v=2.3.0";
+import { createTimePicker } from "./js/time-picker.js?v=2.3.0";
+import { initializeAds } from "./js/ads.js?v=2.3.0";
+import {
+    DEFAULT_SIDEBAR_WIDTH,
+    clampSidebarWidth,
+    readSidebarWidth
+} from "./js/layout-utils.js?v=2.3.0";
+import {
+    buildGoogleTransitUrl,
+    buildTransitDeparture,
+    formatKoreanRouteDate,
+    getTripDate,
+    parseLegacyTransitRoute,
+    parseModernTransitRoute,
+    sortPlacesByTime
+} from "./js/route-utils.js?v=2.3.0";
 
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
@@ -36,7 +62,12 @@ provider.setCustomParameters({ prompt: 'select_account' });
 
 let map;
 let directionsService;
-let Place, AdvancedMarkerElement, PinElement, Geometry;
+let RouteClass;
+let modernRoutesUnavailable = false;
+let routeDetailRequestId = 0;
+const routeRequestCache = new Map();
+const ROUTE_CACHE_TTL = 5 * 60 * 1000;
+let Place, AdvancedMarkerElement, PinElement;
 
 let currentUser = null;
 let currentTripId = null;
@@ -45,6 +76,19 @@ let currentDayIndex = 0;
 let currentEditPlaceId = null;
 let tempPlaceData = null;
 let sortableInstance = null;
+let unsubscribeTrips = null;
+let unsubscribeCurrentTrip = null;
+let lastCenteredTripKey = null;
+let dateRangePicker = null;
+let timePicker = null;
+let pendingInviteTripId = null;
+let appEntryInProgress = false;
+let profileExists = false;
+let currentRouteContext = null;
+const normalizedTripOrders = new Set();
+
+const AGREEMENT_VERSIONS = Object.freeze({ terms: '2.0', privacy: '2.0' });
+const AGREEMENT_STORAGE_KEY = 'plany.requiredAgreement.v2';
 
 let mapMarkers = [];
 let mapPolylines = [];
@@ -144,6 +188,8 @@ function showError(msg) { showPopup("오류", msg, "fas fa-exclamation-circle");
 function showConfirm(msg, callback) { showPopup("확인", msg, "fas fa-question-circle", true, callback); }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const versionEl = document.getElementById('app-version');
+    if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
     
     const addListener = (id, event, handler) => {
         const el = document.getElementById(id);
@@ -151,6 +197,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     addListener('google-login-btn', 'click', handleLogin);
+    document.querySelectorAll('[data-start-plany]').forEach((button) => button.addEventListener('click', handleLogin));
     addListener('logout-btn', 'click', handleLogout); 
     addListener('create-new-trip-btn', 'click', openCreateTripModal);
     addListener('trip-form', 'submit', createNewTrip);
@@ -167,6 +214,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     addListener('save-profile-btn', 'click', saveUserProfile);
     addListener('profile-file-input', 'change', handleProfileImagePreview);
+    addListener('cancel-profile-btn', 'click', cancelProfileSetup);
     
     addListener('my-location-btn', 'click', handleMyLocation);
 
@@ -175,35 +223,127 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     linkDateRange('start-date', 'end-date');
     linkDateRange('setting-start-date', 'setting-end-date');
+    dateRangePicker = createDateRangePicker({ onError: showError });
+    timePicker = createTimePicker();
+    timePicker.syncAll();
+    setupResponsivePlanner();
+    initConsentFlow();
+    initModalControls();
+    addListener('open-privacy-settings', 'click', () => openModal('privacy-settings-modal'));
+    initializeAds(CONFIG.ADSENSE || {});
 
     initLocationSelectors();
     setPersistence(auth, browserLocalPersistence).catch((e) => console.warn('Auth persistence setup failed:', e));
     getRedirectResult(auth).catch((e) => showError(formatAuthError(e)));
 
     const urlParams = new URLSearchParams(window.location.search);
-    const inviteTripId = urlParams.get('invite');
+    pendingInviteTripId = urlParams.get('invite');
 
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
-            const profileReady = await checkUserProfile(user);
-            if (!profileReady) return;
-
-            if (inviteTripId) {
-                await joinTrip(inviteTripId);
-                window.history.replaceState({}, document.title, window.location.pathname);
-            } else {
-                showScreen('dashboard-screen');
-            }
-            
-            loadUserTrips();
-            if(!map) initMapLibrary();
+            if (!await ensureRequiredAgreement(user)) return;
+            await enterAuthenticatedApp(user);
         } else {
+            unsubscribeTrips?.();
+            unsubscribeCurrentTrip?.();
+            unsubscribeTrips = null;
+            unsubscribeCurrentTrip = null;
             currentUser = null;
             showScreen('login-screen');
         }
     });
 });
+
+function setupResponsivePlanner() {
+    const planner = document.getElementById('planner-screen');
+    const sidebar = planner?.querySelector('.sidebar');
+    const header = sidebar?.querySelector('.sidebar-header');
+    const mapContainer = planner?.querySelector('.map-container');
+    const resizer = document.getElementById('sidebar-resizer');
+    if (!planner || !sidebar || !header || !mapContainer || !resizer) return;
+    const media = window.matchMedia('(max-width: 700px)');
+    const storageKey = 'plany.sidebarWidth';
+    let currentWidth = readSidebarWidth(safeLocalStorageGet(storageKey), window.innerWidth);
+    let resizeFrame = null;
+
+    const notifyMapResize = () => {
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = null;
+            if (map && window.google?.maps?.event) window.google.maps.event.trigger(map, 'resize');
+        });
+    };
+
+    const applyWidth = (width, persist = false) => {
+        currentWidth = clampSidebarWidth(width, window.innerWidth);
+        planner.style.setProperty('--sidebar-width', `${currentWidth}px`);
+        resizer.setAttribute('aria-valuenow', String(currentWidth));
+        if (persist) safeLocalStorageSet(storageKey, String(currentWidth));
+        notifyMapResize();
+    };
+
+    const sync = () => {
+        if (media.matches && mapContainer.parentElement !== sidebar) {
+            header.insertAdjacentElement('afterend', mapContainer);
+        } else if (!media.matches && mapContainer.parentElement !== planner) {
+            planner.appendChild(mapContainer);
+        }
+        if (!media.matches) applyWidth(currentWidth);
+        requestAnimationFrame(() => {
+            if (map && window.google?.maps?.event) {
+                window.google.maps.event.trigger(map, 'resize');
+                renderMap();
+            }
+        });
+    };
+
+    const finishResize = (event) => {
+        if (!document.body.classList.contains('sidebar-resizing')) return;
+        document.body.classList.remove('sidebar-resizing');
+        resizer.classList.remove('is-active');
+        if (event?.pointerId !== undefined && resizer.hasPointerCapture?.(event.pointerId)) {
+            resizer.releasePointerCapture(event.pointerId);
+        }
+        applyWidth(currentWidth, true);
+    };
+
+    resizer.addEventListener('pointerdown', (event) => {
+        if (media.matches || event.button !== 0) return;
+        event.preventDefault();
+        resizer.setPointerCapture?.(event.pointerId);
+        resizer.classList.add('is-active');
+        document.body.classList.add('sidebar-resizing');
+    });
+    resizer.addEventListener('pointermove', (event) => {
+        if (!document.body.classList.contains('sidebar-resizing')) return;
+        const plannerLeft = planner.getBoundingClientRect().left;
+        applyWidth(event.clientX - plannerLeft);
+    });
+    resizer.addEventListener('pointerup', finishResize);
+    resizer.addEventListener('pointercancel', finishResize);
+    resizer.addEventListener('dblclick', () => applyWidth(DEFAULT_SIDEBAR_WIDTH, true));
+    resizer.addEventListener('keydown', (event) => {
+        const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+        if (!direction && event.key !== 'Home') return;
+        event.preventDefault();
+        applyWidth(event.key === 'Home' ? DEFAULT_SIDEBAR_WIDTH : currentWidth + direction * 16, true);
+    });
+    window.addEventListener('resize', () => {
+        if (!media.matches) applyWidth(currentWidth);
+    });
+    media.addEventListener?.('change', sync);
+    applyWidth(currentWidth);
+    sync();
+}
+
+function safeLocalStorageGet(key) {
+    try { return window.localStorage.getItem(key); } catch { return null; }
+}
+
+function safeLocalStorageSet(key, value) {
+    try { window.localStorage.setItem(key, value); } catch { /* private browsing or blocked storage */ }
+}
 
 function linkDateRange(startId, endId) {
     const startInput = document.getElementById(startId);
@@ -221,11 +361,12 @@ function linkDateRange(startId, endId) {
 function getTripDateRange(startId, endId) {
     const start = document.getElementById(startId).value;
     const end = document.getElementById(endId).value;
-    if (!start || !end || end < start) {
-        showError("도착일은 출발일과 같거나 이후여야 합니다.");
+    const result = validateTripDateRange(start, end);
+    if (!result.ok) {
+        showError(result.error);
         return null;
     }
-    return { start, end };
+    return { start: result.start, end: result.end, daysCount: result.daysCount };
 }
 
 function initLocationSelectors() {
@@ -283,7 +424,14 @@ function renderDestinationTags() {
     tempDestinations.forEach((dest, index) => {
         const tag = document.createElement('div');
         tag.className = 'location-tag';
-        tag.innerHTML = `<span>${dest}</span> <i class="fas fa-times" onclick="removeDestinationTag(${index})"></i>`;
+        const label = document.createElement('span');
+        label.textContent = dest;
+        const removeIcon = document.createElement('i');
+        removeIcon.className = 'fas fa-times';
+        removeIcon.setAttribute('role', 'button');
+        removeIcon.setAttribute('aria-label', `${dest} 삭제`);
+        removeIcon.addEventListener('click', () => window.removeDestinationTag(index));
+        tag.append(label, ' ', removeIcon);
         container.appendChild(tag);
     });
 }
@@ -297,12 +445,21 @@ function openCreateTripModal() {
     tempDestinations = [];
     renderDestinationTags();
     document.getElementById('trip-form').reset();
+    dateRangePicker?.syncAll();
     document.getElementById('select-region').innerHTML = '<option value="">지역 선택</option>';
     document.getElementById('select-region').disabled = true;
     openModal('setup-modal');
 }
 
 async function handleLogin() { 
+    if (!hasCurrentLocalAgreement()) {
+        openConsentModal();
+        return;
+    }
+    await startGoogleLogin();
+}
+
+async function startGoogleLogin() {
     try {
         await setPersistence(auth, browserLocalPersistence);
         await signInWithPopup(auth, provider);
@@ -314,6 +471,143 @@ async function handleLogin() {
         }
         showError(formatAuthError(e));
     } 
+}
+
+function getLocalAgreement() {
+    try { return JSON.parse(localStorage.getItem(AGREEMENT_STORAGE_KEY) || 'null'); }
+    catch { return null; }
+}
+
+function hasCurrentLocalAgreement() {
+    const value = getLocalAgreement();
+    return value?.termsVersion === AGREEMENT_VERSIONS.terms && value?.privacyVersion === AGREEMENT_VERSIONS.privacy;
+}
+
+function recordLocalAgreement() {
+    const agreement = { termsVersion: AGREEMENT_VERSIONS.terms, privacyVersion: AGREEMENT_VERSIONS.privacy, acceptedAt: new Date().toISOString() };
+    localStorage.setItem(AGREEMENT_STORAGE_KEY, JSON.stringify(agreement));
+    return agreement;
+}
+
+async function persistAgreement(user, localAgreement = getLocalAgreement()) {
+    if (!user || !localAgreement) return false;
+    const agreementData = {
+        uid: user.uid,
+        termsVersion: AGREEMENT_VERSIONS.terms,
+        privacyVersion: AGREEMENT_VERSIONS.privacy,
+        acceptedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    };
+    try {
+        await setDoc(doc(db, 'userAgreements', user.uid), agreementData, { merge: true });
+        return true;
+    } catch (error) {
+        const profileRef = doc(db, 'users', user.uid);
+        const profileSnapshot = await getDoc(profileRef);
+        if (!profileSnapshot.exists()) return false;
+        await updateDoc(profileRef, { agreement: agreementData, updatedAt: serverTimestamp() });
+        return true;
+    }
+}
+
+async function ensureRequiredAgreement(user) {
+    try {
+        const snapshot = await getDoc(doc(db, 'userAgreements', user.uid));
+        const saved = snapshot.data();
+        if (saved?.termsVersion === AGREEMENT_VERSIONS.terms && saved?.privacyVersion === AGREEMENT_VERSIONS.privacy) {
+            if (!hasCurrentLocalAgreement()) recordLocalAgreement();
+            return true;
+        }
+        if (hasCurrentLocalAgreement()) {
+            await persistAgreement(user);
+            return true;
+        }
+    } catch (error) {
+        try {
+            const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
+            const saved = profileSnapshot.data()?.agreement;
+            if (saved?.termsVersion === AGREEMENT_VERSIONS.terms && saved?.privacyVersion === AGREEMENT_VERSIONS.privacy) {
+                if (!hasCurrentLocalAgreement()) recordLocalAgreement();
+                return true;
+            }
+            if (hasCurrentLocalAgreement()) {
+                await persistAgreement(user);
+                return true;
+            }
+        } catch (fallbackError) {
+            console.warn('Agreement fallback lookup failed:', fallbackError);
+            if (hasCurrentLocalAgreement()) return true;
+        }
+    }
+    showScreen('login-screen');
+    openConsentModal();
+    return false;
+}
+
+function initConsentFlow() {
+    const all = document.getElementById('consent-all');
+    const terms = document.getElementById('consent-terms');
+    const privacy = document.getElementById('consent-privacy');
+    const accept = document.getElementById('accept-consent-btn');
+    const sync = () => {
+        const ready = Boolean(terms?.checked && privacy?.checked);
+        if (all) all.checked = ready;
+        if (accept) accept.disabled = !ready;
+    };
+    all?.addEventListener('change', () => { terms.checked = all.checked; privacy.checked = all.checked; sync(); });
+    terms?.addEventListener('change', sync);
+    privacy?.addEventListener('change', sync);
+    document.querySelectorAll('[data-consent-cancel]').forEach((button) => button.addEventListener('click', cancelConsent));
+    accept?.addEventListener('click', async () => {
+        if (!terms.checked || !privacy.checked) return;
+        const agreement = recordLocalAgreement();
+        closeModal('consent-modal', true);
+        if (currentUser) {
+            try {
+                await persistAgreement(currentUser, agreement);
+                await enterAuthenticatedApp(currentUser);
+            } catch (error) { showError('동의 내용을 저장하지 못했습니다. 잠시 후 다시 시도해주세요.'); }
+        } else {
+            await startGoogleLogin();
+        }
+    });
+}
+
+function openConsentModal() {
+    const terms = document.getElementById('consent-terms');
+    const privacy = document.getElementById('consent-privacy');
+    const all = document.getElementById('consent-all');
+    if (terms) terms.checked = false;
+    if (privacy) privacy.checked = false;
+    if (all) all.checked = false;
+    const accept = document.getElementById('accept-consent-btn');
+    if (accept) accept.disabled = true;
+    openModal('consent-modal');
+}
+
+async function cancelConsent() {
+    closeModal('consent-modal', true);
+    if (currentUser) await signOut(auth);
+    currentUser = null;
+    showScreen('login-screen');
+}
+
+async function enterAuthenticatedApp(user) {
+    if (appEntryInProgress || !user) return;
+    appEntryInProgress = true;
+    try {
+        const profileReady = await checkUserProfile(user);
+        if (!profileReady) return;
+        if (pendingInviteTripId) {
+            await joinTrip(pendingInviteTripId);
+            pendingInviteTripId = null;
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+            showScreen('dashboard-screen');
+        }
+        loadUserTrips();
+        if (!map) initMapLibrary();
+    } finally { appEntryInProgress = false; }
 }
 
 function formatAuthError(error) {
@@ -335,10 +629,17 @@ function formatAuthError(error) {
     return `로그인 실패: ${error?.message || '알 수 없는 오류가 발생했습니다.'}`;
 }
 
-function handleLogout() { 
-    showConfirm("정말 로그아웃 하시겠습니까?", () => { 
-        signOut(auth); 
-        window.location.reload(); 
+function handleLogout() {
+    showConfirm("정말 로그아웃 하시겠습니까?", () => {
+        unsubscribeTrips?.();
+        unsubscribeCurrentTrip?.();
+        unsubscribeTrips = null;
+        unsubscribeCurrentTrip = null;
+        currentTripId = null;
+        currentTripData = null;
+        lastCenteredTripKey = null;
+        signOut(auth);
+        window.location.reload();
     }); 
 }
 
@@ -353,6 +654,7 @@ async function checkUserProfile(user) {
     }
 
     if (!docSnap.exists()) {
+        profileExists = false;
         const nickInput = document.getElementById('profile-nickname');
         const prevImg = document.getElementById('profile-preview');
         const defaultImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLTEuNzktNC00LTQtNCAxLjc5LTQgNCAxLjc5IDQgNCA0em0wIDJjLTIuNjcgMC04IDEuMzQtOCA0djJoMTZ2LTJjMC0yLjY2LTUuMzMtNC04LTR6Ii8+PC9zdmc+';
@@ -362,9 +664,18 @@ async function checkUserProfile(user) {
         
         openModal('profile-modal');
     } else {
+        profileExists = true;
         updateDashboardProfile(docSnap.data());
     }
     return true;
+}
+
+async function cancelProfileSetup() {
+    closeModal('profile-modal');
+    if (!profileExists) {
+        await signOut(auth);
+        showScreen('login-screen');
+    }
 }
 
 async function saveUserProfile() {
@@ -378,10 +689,18 @@ async function saveUserProfile() {
             uid: currentUser.uid,
             email: currentUser.email,
             displayName: nickname,
-            photoURL: imgSrc
+            photoURL: imgSrc,
+            agreement: hasCurrentLocalAgreement() ? {
+                termsVersion: AGREEMENT_VERSIONS.terms,
+                privacyVersion: AGREEMENT_VERSIONS.privacy,
+                acceptedAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            } : null,
+            updatedAt: serverTimestamp()
         }, { merge: true });
         
         closeModal('profile-modal');
+        profileExists = true;
         updateDashboardProfile({ displayName: nickname, photoURL: imgSrc });
         showSuccess("프로필이 저장되었습니다!");
     } catch(e) {
@@ -406,7 +725,8 @@ function updateDashboardProfile(data) {
     if (!container) return;
 
     const fallbackImg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2NjYyI+PHBhdGggZD0iTTEyIDEyYzIuMjEgMCA0LTEuNzkgNC00czLtMS43OS00LTQtNC00IDEuNzktNCA0IDEuNzkgNCA0IDR6bTAgMmMtMi42NyAwLTggMS4zNC04IDR2MmgxNnYtMmMwLTIuNjYtNS4zMy00LTgtNHoiLz48L3N2Zz4=';
-    const imgSrc = data.photoURL || fallbackImg;
+    const imgSrc = safeImageUrl(data.photoURL, fallbackImg);
+    const displayName = escapeHTML(normalizeText(data.displayName) || '여행자');
 
     // ✨ 변경된 부분: 
     // 1. <div>로 감싸서 cursor:pointer (손가락 모양) 추가
@@ -414,7 +734,7 @@ function updateDashboardProfile(data) {
     container.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px; cursor:pointer;" onclick="openProfileEdit()">
             <img src="${imgSrc}" class="user-avatar-small" onerror="this.src='${fallbackImg}'">
-            <span class="user-name">${data.displayName}님</span>
+            <span class="user-name">${displayName}님</span>
         </div>
         <button id="logout-btn-dash" class="btn-icon" style="margin-left:10px;"><i class="fas fa-sign-out-alt"></i></button>
     `;
@@ -450,7 +770,8 @@ async function joinTrip(tripId) {
 
 function loadUserTrips() {
     const q = query(collection(db, "trips"), where("members", "array-contains", currentUser.email));
-    onSnapshot(q, (snapshot) => {
+    unsubscribeTrips?.();
+    unsubscribeTrips = onSnapshot(q, (snapshot) => {
         const listEl = document.getElementById('trip-list');
         if (!listEl) return;
         
@@ -465,8 +786,8 @@ function loadUserTrips() {
             div.className = 'trip-card';
             div.innerHTML = `
                 <div class="trip-info">
-                    <h3>${trip.title}</h3>
-                    <p style="color:#868e96; margin-top:5px;">${trip.destination} | ${trip.startDate}</p>
+                    <h3>${escapeHTML(trip.title)}</h3>
+                    <p style="color:#868e96; margin-top:5px;">${escapeHTML(trip.destination)} | ${escapeHTML(trip.startDate)}</p>
                 </div>
                 <div class="trip-actions">
                     <button class="btn-setting" onclick="window.openTripSettings('${docSnap.id}')"><i class="fas fa-cog"></i></button>
@@ -494,23 +815,22 @@ function formatFirebaseDataError(error) {
 
 async function createNewTrip(e) {
     e.preventDefault();
-    const title = document.getElementById('trip-title-input').value;
+    const title = normalizeText(document.getElementById('trip-title-input').value);
     
     if (tempDestinations.length === 0) {
         return showError("최소 한 곳 이상의 여행지를 추가해주세요.");
     }
-    const dest = tempDestinations.join(' / ');
-
     const dateRange = getTripDateRange('start-date', 'end-date');
     if (!dateRange) return;
-    const { start, end } = dateRange;
-    const sDate = new Date(start); const eDate = new Date(end);
-    const daysCount = (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
+    const draft = validateTripDraft({ title, destinations: tempDestinations, ...dateRange });
+    if (!draft.ok) return showError(draft.error);
+    const { title: cleanTitle, destination: cleanDestination, start, end, daysCount } = draft;
     const days = Array.from({length: daysCount}, (_, i) => ({ day: i + 1, places: [] }));
 
     const newTrip = {
-        title, destination: dest, startDate: start, endDate: end,
-        owner: currentUser.email, members: [currentUser.email], days: days
+        title: cleanTitle, destination: cleanDestination, startDate: start, endDate: end,
+        owner: currentUser.email, members: [currentUser.email], days,
+        schemaVersion: 2, createdAt: serverTimestamp(), updatedAt: serverTimestamp()
     };
 
     try {
@@ -531,6 +851,7 @@ window.openTripSettings = async function(tripId) {
         document.getElementById('setting-start-date').value = data.startDate;
         document.getElementById('setting-end-date').value = data.endDate;
         document.getElementById('setting-end-date').min = data.startDate;
+        dateRangePicker?.syncAll();
         openModal('trip-settings-modal');
     }
 }
@@ -538,18 +859,21 @@ window.openTripSettings = async function(tripId) {
 async function updateTripSettings(e) {
     e.preventDefault();
     const tripId = document.getElementById('setting-trip-id').value;
-    const title = document.getElementById('setting-title').value;
+    const title = normalizeText(document.getElementById('setting-title').value);
     const dateRange = getTripDateRange('setting-start-date', 'setting-end-date');
     if (!dateRange) return;
-    const { start, end } = dateRange;
-    
     const tripRef = doc(db, "trips", tripId);
     const snap = await getDoc(tripRef);
-    let days = snap.data().days;
-    
-    const sDate = new Date(start); 
-    const eDate = new Date(end);
-    const newCount = (eDate - sDate) / (1000 * 60 * 60 * 24) + 1;
+    if (!snap.exists()) return showError('수정할 여행을 찾을 수 없습니다.');
+
+    const validation = validateTripDraft({
+        title,
+        destinations: String(snap.data().destination || '').split(' / '),
+        ...dateRange
+    });
+    if (!validation.ok) return showError(validation.error);
+    const { start, end, daysCount: newCount } = validation;
+    let days = Array.isArray(snap.data().days) ? [...snap.data().days] : [];
     
     if(newCount > days.length) {
         for(let i=days.length; i<newCount; i++) days.push({day: i+1, places: []});
@@ -558,7 +882,7 @@ async function updateTripSettings(e) {
     }
 
     try {
-        await updateDoc(tripRef, { title, startDate: start, endDate: end, days });
+        await updateDoc(tripRef, { title, startDate: start, endDate: end, days, updatedAt: serverTimestamp() });
         closeModal('trip-settings-modal');
         showSuccess("여행 정보가 수정되었습니다.");
     } catch(e) { showError("수정 실패"); }
@@ -576,6 +900,7 @@ async function deleteTrip() {
 }
 
 window.loadTrip = function(tripId) {
+    if (currentTripId !== tripId) lastCenteredTripKey = null;
     currentTripId = tripId;
     showScreen('planner-screen');
     
@@ -585,10 +910,12 @@ window.loadTrip = function(tripId) {
     const inviteInput = document.getElementById('invite-link');
     if(inviteInput) inviteInput.value = inviteUrl;
 
-    // async 키워드 추가됨
-    onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
+    unsubscribeCurrentTrip?.();
+    unsubscribeCurrentTrip = onSnapshot(doc(db, "trips", tripId), async (docSnap) => {
         if (!docSnap.exists()) { showScreen('dashboard-screen'); return; }
         currentTripData = docSnap.data();
+        normalizeExistingTripPlaceOrder(tripId);
+        centerMapOnTrip();
         
         // 프로필 정보 가져오기 (닉네임 표시용)
         await fetchMemberProfiles();
@@ -607,27 +934,52 @@ window.loadTrip = function(tripId) {
         
         if(currentDayIndex >= currentTripData.days.length) currentDayIndex = 0;
         selectDay(currentDayIndex);
+    }, (error) => {
+        console.error(error);
+        showError(formatFirebaseDataError(error));
     });
-
-    if(map && currentTripData) {
-        // 데이터에 목적지가 있다면 지도의 중심으로 잡기
-        const firstDest = currentTripData.destination ? currentTripData.destination.split(' / ')[0] : "Japan";
-        new google.maps.Geocoder().geocode({address: firstDest}, (res, status)=>{
-            if(status === 'OK') {
-                const loc = res[0].geometry.location;
-                map.setCenter(loc);
-                fetchWeather(loc.lat(), loc.lng(), firstDest);
-            }
-        });
-    }
 }
+
+function normalizeExistingTripPlaceOrder(tripId) {
+    if (!tripId || normalizedTripOrders.has(tripId) || !Array.isArray(currentTripData?.days)) return;
+    normalizedTripOrders.add(tripId);
+    let changed = false;
+    const days = currentTripData.days.map((day) => {
+        const original = Array.isArray(day.places) ? day.places : [];
+        const sorted = sortPlacesByTime(original);
+        if (sorted.some((place, index) => place !== original[index])) changed = true;
+        return { ...day, places: sorted };
+    });
+    if (!changed) return;
+    currentTripData.days = days;
+    updateDoc(doc(db, 'trips', tripId), { days, updatedAt: serverTimestamp() })
+        .catch((error) => console.warn('기존 일정 시간순 정리 실패:', error));
+}
+
+function centerMapOnTrip() {
+    if (!map || !currentTripData || !window.google?.maps?.Geocoder) return;
+    const firstDest = currentTripData.destination?.split(' / ')[0] || 'Japan';
+    const centerKey = `${currentTripId}:${firstDest}`;
+    if (lastCenteredTripKey === centerKey) return;
+    lastCenteredTripKey = centerKey;
+    new google.maps.Geocoder().geocode({ address: firstDest }, (results, status) => {
+        if (status !== 'OK' || !results?.[0]) {
+            lastCenteredTripKey = null;
+            return;
+        }
+        const location = results[0].geometry.location;
+        map.setCenter(location);
+        fetchWeather(location.lat(), location.lng(), firstDest);
+    });
+}
+
 async function saveTrip() {
     if(!currentTripId) return;
     try { 
         await updateDoc(doc(db, "trips", currentTripId), {
             days: currentTripData.days,
             checklists: currentTripData.checklists || [],
-            updatedAt: new Date().toISOString()
+            updatedAt: serverTimestamp()
         }); 
     } catch(e) { console.error(e); }
 }
@@ -635,16 +987,16 @@ async function saveTrip() {
 async function initMapLibrary() {
     try {
         const { Map } = await google.maps.importLibrary("maps");
-        const { DirectionsService } = await google.maps.importLibrary("routes");
+        const routesLib = await google.maps.importLibrary("routes");
         const placesLib = await google.maps.importLibrary("places");
         const markerLib = await google.maps.importLibrary("marker");
-        const geometryLib = await google.maps.importLibrary("geometry");
+        await google.maps.importLibrary("geometry");
 
         Place = placesLib.Place;
         AdvancedMarkerElement = markerLib.AdvancedMarkerElement;
         PinElement = markerLib.PinElement;
-        Geometry = geometryLib;
-        directionsService = new DirectionsService();
+        RouteClass = routesLib.Route;
+        directionsService = null;
 
         const mapEl = document.getElementById('map');
         if(mapEl) {
@@ -655,6 +1007,7 @@ async function initMapLibrary() {
                 disableDefaultUI: true,
                 gestureHandling: "greedy"
             });
+            centerMapOnTrip();
         }
     } catch (e) {
         console.error("지도 로드 실패:", e);
@@ -681,7 +1034,7 @@ function renderMap() {
         });
         
         const marker = new AdvancedMarkerElement({
-            map, position: place.location, content: pin.element, title: place.name
+            map, position: place.location, content: pin, title: place.name
         });
         mapMarkers.push(marker);
         bounds.extend(place.location);
@@ -691,199 +1044,292 @@ function renderMap() {
 
     if(places.length > 1) {
         for(let i=0; i<places.length-1; i++) {
-            drawRouteAndInfoButton(places[i], places[i+1]);
+            drawRoutePreview(places[i], places[i+1], i);
         }
     }
 }
 
-function getSafeTransitDate(timeStr) {
-    const now = new Date();
-    const targetDate = new Date();
-
-    if(timeStr) { 
-        const [h, m] = timeStr.split(':'); 
-        targetDate.setHours(h, m, 0, 0); 
-    } else { 
-        targetDate.setHours(10, 0, 0, 0); 
-    }
-
-    if (targetDate < now) {
-        targetDate.setDate(targetDate.getDate() + 1);
-    }
-    return targetDate;
+function getTransitDepartureInfo(time) {
+    return buildTransitDeparture(currentTripData?.startDate, currentDayIndex, time);
 }
 
-function drawRouteAndInfoButton(origin, destination) {
-    const targetDate = getSafeTransitDate(origin.time);
+function ensureLegacyDirectionsService() {
+    if (!directionsService) directionsService = new google.maps.DirectionsService();
+    return directionsService;
+}
 
-    const requestTransit = {
-        origin: origin.location,
-        destination: destination.location,
-        travelMode: google.maps.TravelMode.TRANSIT,
-        transitOptions: { departureTime: targetDate }
-    };
+function getCoordinateValue(point, key) {
+    const value = point?.[key];
+    const number = typeof value === 'function' ? Number(value.call(point)) : Number(value);
+    return Number.isFinite(number) ? number.toFixed(5) : 'unknown';
+}
 
-    directionsService.route(requestTransit, (result, status) => {
-        if (status === 'OK') {
-            renderPolyline(result.routes[0].overview_path, origin, destination);
-        } else {
-            const requestDriving = {
-                origin: origin.location,
-                destination: destination.location,
-                travelMode: google.maps.TravelMode.DRIVING
-            };
-            directionsService.route(requestDriving, (resDriving, statusDriving) => {
-                if (statusDriving === 'OK') {
-                    renderPolyline(resDriving.routes[0].overview_path, origin, destination);
-                } else {
-                    const path = [origin.location, destination.location];
-                    const polyline = new google.maps.Polyline({
-                        path: path, map: map, 
-                        strokeColor: '#364fc7', strokeWeight: 6, strokeOpacity: 1.0, 
-                        geodesic: true, 
-                        icons: [{ icon: {path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW}, offset: '50%' }]
-                    });
-                    mapPolylines.push(polyline);
-                    
-                    const midPoint = google.maps.geometry.spherical.interpolate(
-                        new google.maps.LatLng(origin.location), 
-                        new google.maps.LatLng(destination.location), 0.5
-                    );
-                    createRouteButton(midPoint, origin, destination);
-                }
-            });
-        }
+function getRouteRequestKey({ origin, destination, travelMode, departureTime, alternatives }) {
+    const departureMinute = departureTime instanceof Date && !Number.isNaN(departureTime.getTime())
+        ? Math.floor(departureTime.getTime() / 60000)
+        : 'now';
+    return [
+        getCoordinateValue(origin, 'lat'), getCoordinateValue(origin, 'lng'),
+        getCoordinateValue(destination, 'lat'), getCoordinateValue(destination, 'lng'),
+        travelMode, departureMinute, alternatives ? 'alternatives' : 'primary'
+    ].join('|');
+}
+
+function requestRouteSet(options) {
+    const key = getRouteRequestKey(options);
+    const cached = routeRequestCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    const promise = computeRouteSet(options).catch((error) => {
+        routeRequestCache.delete(key);
+        throw error;
     });
+    const entry = { promise, expiresAt: Date.now() + ROUTE_CACHE_TTL };
+    promise.then((result) => {
+        if (!result.routes?.length) entry.expiresAt = Date.now() + 60 * 1000;
+    });
+    routeRequestCache.set(key, entry);
+    if (routeRequestCache.size > 80) {
+        const oldestKey = routeRequestCache.keys().next().value;
+        routeRequestCache.delete(oldestKey);
+    }
+    return promise;
 }
 
-function renderPolyline(path, origin, destination) {
+async function computeRouteSet({ origin, destination, travelMode, departureTime, alternatives = false }) {
+    if (RouteClass && !modernRoutesUnavailable) {
+        try {
+            const request = {
+                origin,
+                destination,
+                travelMode,
+                computeAlternativeRoutes: alternatives,
+                fields: ['path', 'legs', 'travelAdvisory', 'localizedValues', 'warnings']
+            };
+            if (travelMode === 'TRANSIT') {
+                if (departureTime) request.departureTime = departureTime;
+            } else if (travelMode === 'DRIVING') {
+                request.routingPreference = 'TRAFFIC_AWARE';
+            }
+            const result = await RouteClass.computeRoutes(request);
+            const modernRoutes = result.routes || [];
+            if (modernRoutes.length || travelMode !== 'TRANSIT') {
+                return { kind: 'modern', routes: modernRoutes };
+            }
+        } catch (error) {
+            if (!modernRoutesUnavailable) {
+                console.info('Routes API를 사용할 수 없어 기존 경로 서비스로 전환합니다.', error?.message || error);
+            }
+            modernRoutesUnavailable = true;
+        }
+    }
+    const request = { origin, destination, travelMode, provideRouteAlternatives: alternatives };
+    if (travelMode === google.maps.TravelMode.TRANSIT && departureTime) request.transitOptions = { departureTime };
+    return new Promise((resolve) => ensureLegacyDirectionsService().route(request, (result, status) => {
+        resolve({ kind: 'legacy', routes: status === 'OK' ? result.routes || [] : [], status });
+    }));
+}
+
+function drawRoutePreview(origin, destination, index) {
+    const directPath = [origin.location, destination.location];
     const polyline = new google.maps.Polyline({
-        path: path, map: map, 
-        strokeColor: '#364fc7',
-        strokeWeight: 7, 
-        strokeOpacity: 1.0
+        path: directPath, map,
+        strokeColor: '#0a84ff', strokeWeight: 4, strokeOpacity: .58,
+        geodesic: true,
+        icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW }, offset: '50%' }]
     });
     mapPolylines.push(polyline);
-    createRouteButton(getPolylineMidpoint(path), origin, destination);
+    const midPoint = google.maps.geometry.spherical.interpolate(
+        new google.maps.LatLng(origin.location),
+        new google.maps.LatLng(destination.location), 0.5
+    );
+    createRouteButton(midPoint, origin, destination, `${index + 1}→${index + 2}`);
 }
 
-function getPolylineMidpoint(path) {
-    if (!Geometry || !path || path.length === 0) return null;
-    const totalDist = google.maps.geometry.spherical.computeLength(path);
-    const halfDist = totalDist / 2;
-    let distSoFar = 0;
-    for (let i = 0; i < path.length - 1; i++) {
-        const segmentDist = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]);
-        if (distSoFar + segmentDist >= halfDist) {
-            const ratio = (halfDist - distSoFar) / segmentDist;
-            return google.maps.geometry.spherical.interpolate(path[i], path[i+1], ratio);
-        }
-        distSoFar += segmentDist;
-    }
-    return path[Math.floor(path.length / 2)];
+function createRouteButton(position, origin, destination, label = '경로') {
+    if (!position || !AdvancedMarkerElement) return;
+    const description = `${origin.name}에서 ${destination.name} 이동경로 보기`;
+    const markerContent = document.createElement('div');
+    markerContent.className = 'route-info-marker';
+    markerContent.append(`${label} `);
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-info-circle';
+    icon.setAttribute('aria-hidden', 'true');
+    markerContent.appendChild(icon);
+    const infoMarker = new AdvancedMarkerElement({
+        map,
+        position,
+        content: markerContent,
+        title: description,
+        gmpClickable: true
+    });
+    infoMarker.addEventListener('gmp-click', () => showRouteDetailModal(origin, destination));
+    mapRouteMarkers.push(infoMarker);
 }
 
-//function createRouteButton(position, origin, destination) {
-//    if(!position) return;
-//    const btnDiv = document.createElement('div');
-//    btnDiv.className = 'route-info-marker';
-//    btnDiv.innerHTML = `INFO <i class="fas fa-info-circle"></i>`;
-//    btnDiv.addEventListener('click', (e) => { 
-//        e.stopPropagation(); 
-//        showRouteDetailModal(origin, destination); 
-//    });
-//    const infoMarker = new AdvancedMarkerElement({
-//        map, position: position, content: btnDiv, title: "정보 확인"
-//    });
-//    mapRouteMarkers.push(infoMarker);
-//}
-//
-
-function showRouteDetailModal(origin, dest) {
+async function showRouteDetailModal(origin, dest) {
     const container = document.getElementById('route-comparison');
-    if(container) container.innerHTML = '<p style="text-align:center;">경로 정보 로딩 중...</p>';
+    if (!container) return;
+    currentRouteContext = { origin, destination: dest };
+    const requestId = ++routeDetailRequestId;
+    document.getElementById('route-modal-title').textContent = `${origin.name} → ${dest.name}`;
+    const departure = getTransitDepartureInfo(origin.time);
+    document.getElementById('route-modal-date').textContent = departure.adjustment === 'past'
+        ? `${formatKoreanRouteDate(departure.requested)} 일정 · 지난 시간이어서 현재 운행정보로 조회`
+        : departure.adjustment === 'future'
+            ? `${formatKoreanRouteDate(departure.requested)} 일정 · API 제공 범위를 넘어 가장 가까운 운행일로 조회`
+            : `${formatKoreanRouteDate(departure.queryDate)} 출발 기준`;
+    container.innerHTML = '<div class="route-loading"><i class="fas fa-circle-notch fa-spin"></i><strong>가장 좋은 이동경로를 찾는 중</strong><span>대중교통과 대체 경로를 함께 확인하고 있어요.</span></div>';
     openModal('route-detail-modal');
 
-    const targetDate = getSafeTransitDate(origin.time);
-
-    directionsService.route({
-        origin: origin.location, destination: dest.location, 
-        travelMode: google.maps.TravelMode.TRANSIT, 
-        transitOptions: { departureTime: targetDate }
-    }, (res, status) => {
-        if(container) {
-            container.innerHTML = '';
-            if (status === 'OK') {
-                const leg = res.routes[0].legs[0];
-                container.innerHTML = `
-                    <div class="transport-card">
-                        <div class="transport-header">
-                            <span>🚍 대중교통 추천</span>
-                            <span>${leg.duration.text}</span>
-                        </div>
-                        <div class="transport-steps">
-                            ${formatTransitSteps(leg.steps)}
-                        </div>
-                    </div>
-                `;
-                container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
-            } else {
-                container.innerHTML = '<p style="text-align:center; padding:20px; color:#868e96;">이 구간은 대중교통 정보가 없거나(일본 등), 도보가 빠릅니다.<br>아래 대체 경로를 참고하세요.</p>';
-                container.appendChild(document.createElement('div')).appendChild(addOtherModes(origin, dest, container));
-            }
-        }
+    const result = await requestRouteSet({
+        origin: origin.location,
+        destination: dest.location,
+        travelMode: google.maps.TravelMode.TRANSIT,
+        departureTime: departure.queryDate,
+        alternatives: true
     });
+    if (requestId !== routeDetailRequestId) return;
+    container.innerHTML = '';
+    if (result.routes[0]) {
+        const journey = result.kind === 'modern'
+            ? parseModernTransitRoute(result.routes[0])
+            : parseLegacyTransitRoute(result.routes[0]);
+        container.appendChild(renderTransitJourney(journey));
+        if (result.routes.length > 1) {
+            const alternatives = document.createElement('p');
+            alternatives.className = 'route-alternative-note';
+            alternatives.textContent = `비슷한 대중교통 경로 ${result.routes.length - 1}개가 더 있어요. Google 지도에서 전체 경로를 비교할 수 있습니다.`;
+            container.appendChild(alternatives);
+        }
+    } else {
+        container.appendChild(renderGoogleTransitFallback(origin, dest));
+    }
+    renderAlternativeModes(origin, dest, container);
 }
 
-function formatTransitSteps(steps) {
-    let html = '';
-    steps.forEach(step => {
-        if (step.travel_mode === 'TRANSIT') {
-            const line = step.transit.line;
-            const color = line.color || '#339af0';
-            const textColor = line.text_color || '#fff';
-            html += `
-                <div class="transit-step" style="display:flex; gap:10px; margin-bottom:10px;">
-                    <span style="background:${color}; color:${textColor}; padding:2px 6px; border-radius:4px; font-weight:bold; height:fit-content; white-space:nowrap;">
-                        ${line.vehicle.name||''} ${line.short_name||line.name}
-                    </span>
-                    <div>
-                        <div style="font-weight:bold;">${step.transit.departure_stop.name} 승차</div>
-                        <div style="font-size:0.85em; color:#868e96;">⬇ ${step.duration.text} (${step.transit.num_stops}개 역)</div>
-                        <div style="font-weight:bold;">${step.transit.arrival_stop.name} 하차</div>
-                    </div>
-                </div>`;
-        } else if (step.travel_mode === 'WALKING') {
-            html += `<div style="color:#868e96; font-size:0.9em; margin-bottom:10px;"><i class="fas fa-walking"></i> 도보 ${step.duration.text} (${step.distance.text})</div>`;
-        }
+function renderGoogleTransitFallback(origin, destination) {
+    const section = document.createElement('section');
+    section.className = 'google-transit-fallback';
+    const embedUrl = buildGoogleTransitUrl({
+        origin: origin.location,
+        destination: destination.location,
+        apiKey: CONFIG.GOOGLE_API_KEY,
+        embed: true
     });
-    return html;
+    section.innerHTML = `
+        <div class="google-transit-intro">
+            <span class="google-transit-icon"><i class="fas fa-train-subway"></i></span>
+            <div><small>GOOGLE 대중교통</small><h4>현지 노선은 지도에서 이어서 볼게요</h4><p>Plany가 노선 데이터를 받지 못한 지역은 Google 지도의 최신 대중교통 화면을 바로 연결합니다.</p></div>
+        </div>
+        <div class="google-transit-frame-shell">
+            <div class="google-transit-frame-loading"><i class="fas fa-circle-notch fa-spin"></i><span>Google 지도를 불러오는 중</span></div>
+        </div>
+        <div class="google-transit-footer"><span><i class="fas fa-location-dot"></i> ${escapeHTML(origin.name)} → ${escapeHTML(destination.name)}</span><button type="button" data-open-google-transit><i class="fas fa-arrow-up-right-from-square"></i> 크게 보기</button></div>`;
+
+    const frameShell = section.querySelector('.google-transit-frame-shell');
+    if (embedUrl) {
+        const frame = document.createElement('iframe');
+        frame.className = 'google-transit-frame';
+        frame.title = `${origin.name}에서 ${destination.name}까지 Google 대중교통 경로`;
+        frame.src = embedUrl;
+        frame.loading = 'eager';
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        frame.allowFullscreen = true;
+        frame.addEventListener('load', () => section.classList.add('is-map-ready'), { once: true });
+        frameShell.appendChild(frame);
+    } else {
+        frameShell.innerHTML = '<div class="google-transit-frame-error"><i class="fas fa-map-location-dot"></i><strong>지도를 바로 표시하지 못했어요</strong><span>아래 버튼으로 Google 지도에서 확인할 수 있습니다.</span></div>';
+    }
+    section.querySelector('[data-open-google-transit]')?.addEventListener('click', redirectToBooking);
+    return section;
 }
 
-function addOtherModes(origin, dest, container) {
-    const wrapper = document.createElement('div');
+function renderTransitJourney(journey) {
+    const article = document.createElement('article');
+    article.className = 'transit-journey';
+    const fare = journey.fare ? `<div><span>예상 운임</span><strong>${escapeHTML(journey.fare)}</strong></div>` : '';
+    article.innerHTML = `
+        <div class="route-summary-card">
+            <div class="route-summary-top"><span><i class="fas fa-bus-simple"></i> 추천 대중교통</span><strong>${escapeHTML(journey.duration || '시간 정보 없음')}</strong></div>
+            <div class="route-time-band"><strong>${escapeHTML(journey.departureTime || '--:--')}</strong><span><i></i>${escapeHTML(journey.distance || '')}<i></i></span><strong>${escapeHTML(journey.arrivalTime || '--:--')}</strong></div>
+            <div class="route-summary-metrics"><div><span>환승</span><strong>${journey.transfers}회</strong></div>${fare}<div><span>구간</span><strong>${journey.segments.length}개</strong></div></div>
+        </div>
+        <div class="route-segments"></div>`;
+    const segmentList = article.querySelector('.route-segments');
+    journey.segments.forEach((segment, index) => segmentList.appendChild(renderRouteSegment(segment, index)));
+    if (journey.warnings.length) {
+        const warning = document.createElement('div');
+        warning.className = 'route-api-warning';
+        warning.innerHTML = `<i class="fas fa-triangle-exclamation"></i><span>${journey.warnings.map(item => escapeHTML(item)).join('<br>')}</span>`;
+        article.appendChild(warning);
+    }
+    if (journey.copyrights) {
+        const credit = document.createElement('small');
+        credit.className = 'route-credit';
+        credit.textContent = journey.copyrights;
+        article.appendChild(credit);
+    }
+    return article;
+}
+
+function stationLink(stop, suffix) {
+    const name = escapeHTML(stop?.name || '정류장 정보 없음');
+    if (!stop?.location) return `<strong>${name}</strong><small>${suffix}</small>`;
+    const { lat, lng } = stop.location;
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+    return `<a href="${url}" target="_blank" rel="noopener"><strong>${name}</strong><small>${suffix} · 지도에서 위치 보기 <i class="fas fa-arrow-up-right-from-square"></i></small></a>`;
+}
+
+function renderRouteSegment(segment, index) {
+    const item = document.createElement('div');
+    item.className = `route-segment ${segment.mode === 'TRANSIT' ? 'is-transit' : 'is-walking'}`;
+    if (segment.mode !== 'TRANSIT') {
+        const instruction = normalizeText(String(segment.instructions || '').replace(/<[^>]*>/g, ' '));
+        item.innerHTML = `<span class="segment-node"><i class="fas fa-person-walking"></i></span><div><strong>도보 ${escapeHTML(segment.duration || '')}</strong><small>${escapeHTML(segment.distance || '')}${instruction ? ` · ${escapeHTML(instruction)}` : ''}</small></div>`;
+        return item;
+    }
+    const lineLabel = `${segment.vehicle} ${segment.lineName}`.trim();
+    const detailParts = [segment.duration, segment.stops === null ? '' : `${segment.stops}개 정류장`, segment.headwayMinutes ? `약 ${segment.headwayMinutes}분 간격` : ''].filter(Boolean);
+    item.innerHTML = `
+        <span class="segment-node transit" style="--line-color:${segment.color}"><i class="fas fa-${segment.vehicleType.includes('BUS') ? 'bus-simple' : 'train-subway'}"></i></span>
+        <div class="transit-segment-body">
+            <div class="transit-line-head"><span class="transit-line-badge" style="background:${segment.color};color:${segment.textColor}">${escapeHTML(lineLabel)}</span>${segment.tripName ? `<small>운행 ${escapeHTML(segment.tripName)}</small>` : ''}</div>
+            ${segment.lineFullName && segment.lineFullName !== segment.lineName ? `<p class="transit-full-name">${escapeHTML(segment.lineFullName)}</p>` : ''}
+            <div class="station-row"><time>${escapeHTML(segment.departureTime || '')}</time>${stationLink(segment.departureStop, '승차')}</div>
+            <div class="transit-ride-line" style="--line-color:${segment.color}"><span>${escapeHTML(detailParts.join(' · '))}</span>${segment.headsign ? `<small>${escapeHTML(segment.headsign)} 방면</small>` : ''}</div>
+            <div class="station-row"><time>${escapeHTML(segment.arrivalTime || '')}</time>${stationLink(segment.arrivalStop, '하차')}</div>
+            ${segment.agency ? `<p class="transit-agency"><i class="fas fa-building"></i> ${escapeHTML(segment.agency)}</p>` : ''}
+        </div>`;
+    return item;
+}
+
+function renderAlternativeModes(origin, dest, container) {
+    const wrapper = document.createElement('section');
+    wrapper.className = 'route-alternatives';
+    wrapper.innerHTML = '<h4>다른 이동 방법</h4><div class="alternative-grid"></div><p class="walking-disclaimer"><i class="fas fa-circle-info"></i> 도보 경로에는 보행로가 명확하지 않은 구간이 포함될 수 있으니 현지 표지와 안전을 확인하세요.</p>';
+    const grid = wrapper.querySelector('.alternative-grid');
+    container.appendChild(wrapper);
     const modes = [
-        { mode: google.maps.TravelMode.DRIVING, label: "🚖 택시 (예상)", icon: "fa-taxi" },
-        { mode: google.maps.TravelMode.WALKING, label: "🚶 도보", icon: "fa-walking" }
+        { mode: google.maps.TravelMode.DRIVING, label: '차량·택시', icon: 'fa-car-side' },
+        { mode: google.maps.TravelMode.WALKING, label: '도보', icon: 'fa-person-walking' }
     ];
-    modes.forEach(m => {
-        directionsService.route({ origin: origin.location, destination: dest.location, travelMode: m.mode }, (res, status) => {
-            if (status === 'OK') {
-                const leg = res.routes[0].legs[0];
-                let costStr = "";
-                if (m.mode === google.maps.TravelMode.DRIVING) {
-                    const km = leg.distance.value / 1000;
-                    costStr = `(약 ${Math.round(500 + km*400).toLocaleString()}엔)`;
-                }
-                const div = document.createElement('div');
-                div.className = "transport-option";
-                div.style.cssText = "display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #eee;";
-                div.innerHTML = `<div><i class="fas ${m.icon}"></i> ${m.label} <small style="color:#fa5252">${costStr}</small></div><div>${leg.duration.text}</div>`;
-                wrapper.appendChild(div);
-            }
-        });
+    modes.forEach(async (m) => {
+        const card = document.createElement('div');
+        card.className = 'alternative-card is-loading';
+        card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>조회 중</strong>`;
+        grid.appendChild(card);
+        const result = await requestRouteSet({ origin: origin.location, destination: dest.location, travelMode: m.mode });
+        const route = result.routes[0];
+        const leg = route?.legs?.[0];
+        card.classList.remove('is-loading');
+        if (route && leg) {
+            const duration = result.kind === 'modern' ? route.localizedValues?.duration || leg.localizedValues?.duration : leg.duration?.text;
+            const distance = result.kind === 'modern' ? route.localizedValues?.distance || leg.localizedValues?.distance : leg.distance?.text;
+            card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>${escapeHTML(duration || '-')}</strong><small>${escapeHTML(distance || '')}</small>`;
+        } else {
+            card.innerHTML = `<i class="fas ${m.icon}"></i><span>${m.label}</span><strong>정보 없음</strong>`;
+        }
     });
-    return wrapper;
 }
 
 function renderPlaceList() {
@@ -894,6 +1340,7 @@ function renderPlaceList() {
     const places = currentTripData.days[currentDayIndex].places;
 
     places.forEach((place, idx) => {
+        const nextPlace = places[idx + 1];
         const div = document.createElement('div');
         div.className = 'place-card';
         div.setAttribute('data-id', place.id);
@@ -907,14 +1354,18 @@ function renderPlaceList() {
 
         // 메모가 있을 때만 meta 영역 표시 (비용은 이제 체크 안 함)
         const hasMeta = !!place.memo;
+        const safeType = ['restaurant', 'attraction', 'hotel', 'transport', 'shopping', 'food', 'sight'].includes(place.type) ? place.type : 'attraction';
+        const safeName = escapeHTML(place.name);
+        const safeTime = escapeHTML(place.time || '--:--');
+        const safeMemo = escapeHTML(place.memo);
         
         div.innerHTML = `
-            <div class="place-marker-icon ${place.type}">${idx+1}</div>
+            <div class="place-marker-icon ${safeType}">${idx+1}</div>
             <div class="place-content">
                 <div class="place-header">
-                    <span class="place-title">${place.name}</span>
+                    <span class="place-title">${safeName}</span>
                     <div class="place-right-group">
-                        <span class="place-time-badge">${place.time||'--:--'}</span>
+                        <span class="place-time-badge">${safeTime}</span>
                         <div class="place-actions">
                             <button class="btn-action-large" onclick="openEditPlaceModal(${place.id})"><i class="fas fa-edit"></i></button>
                             <button class="btn-action-large delete" style="color:#fa5252;" onclick="removePlace(${place.id})"><i class="fas fa-trash"></i></button>
@@ -923,15 +1374,20 @@ function renderPlaceList() {
                 </div>
 
                 <div class="place-meta ${hasMeta?'has-content':''}">
-                    ${place.memo ? `<i class="far fa-sticky-note"></i> ${place.memo}` : ''} 
+                    ${place.memo ? `<i class="far fa-sticky-note"></i> ${safeMemo}` : ''}
                 </div>
 
                 <div class="place-footer-actions">
                     <button class="btn-find-way" onclick="openNavToPlace(${place.location.lat}, ${place.location.lng})">
                         <i class="fas fa-location-arrow"></i> 길찾기
                     </button>
+                    ${nextPlace ? `<button type="button" class="btn-segment-route"><i class="fas fa-bus-simple"></i> ${idx + 1}→${idx + 2} 교통</button>` : ''}
                 </div>
             </div>`;
+        div.querySelector('.btn-segment-route')?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            showRouteDetailModal(place, nextPlace);
+        });
         list.appendChild(div);
     });
 
@@ -1122,7 +1578,7 @@ async function buildSmartDraft() {
     }
 
     currentTripData.days[currentDayIndex].places.push(...draftPlaces);
-    currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    currentTripData.days[currentDayIndex].places = sortPlacesByTime(currentTripData.days[currentDayIndex].places);
     await saveTrip();
     renderTripInsights();
     renderPlaceList();
@@ -1165,7 +1621,7 @@ window.fillMealGap = async function() {
             memo: `AI 초안: ${needLunch ? '점심' : '저녁'} 후보`,
             cost: 0
         });
-        currentTripData.days[currentDayIndex].places.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        currentTripData.days[currentDayIndex].places = sortPlacesByTime(currentTripData.days[currentDayIndex].places);
         await saveTrip();
         renderTripInsights();
         renderPlaceList();
@@ -1207,7 +1663,7 @@ function handlePlaceSearch(e) {
             places.slice(0, 5).forEach(p => {
                 const div = document.createElement('div');
                 div.className = 'result-item';
-                div.innerHTML = `<b>${p.displayName}</b><br><small>${p.formattedAddress}</small>`;
+                div.innerHTML = `<b>${escapeHTML(p.displayName)}</b><br><small>${escapeHTML(p.formattedAddress)}</small>`;
                 div.onclick = () => { initiateAddPlace({ displayName: p.displayName, formattedAddress: p.formattedAddress, location: p.location, types: p.types }); };
                 resList.appendChild(div);
             });
@@ -1220,7 +1676,8 @@ function handlePlaceSearch(e) {
 function initiateAddPlace(p) { 
     tempPlaceData = p; 
     document.getElementById('selected-place-name').innerText = p.displayName; 
-    document.getElementById('new-place-time').value = "10:00"; 
+    document.getElementById('new-place-time').value = "10:00";
+    timePicker?.syncAll();
     openModal('time-selection-modal'); 
     document.getElementById('search-results').classList.remove('active'); 
     document.getElementById('search-results-header').style.display = 'none';
@@ -1241,8 +1698,9 @@ function confirmAddPlace() {
         time: timeVal, memo: '', cost: 0 
     };
     
-    currentTripData.days[currentDayIndex].places.push(newPlace);
-    saveTrip(); 
+    const day = currentTripData.days[currentDayIndex];
+    day.places = sortPlacesByTime([...day.places, newPlace]);
+    saveTrip();
     closeModal('time-selection-modal'); 
     map.panTo(newPlace.location); map.setZoom(15); 
     fetchWeather(newPlace.location.lat, newPlace.location.lng, newPlace.name);
@@ -1299,9 +1757,9 @@ async function recommendNearbyPlaces() {
                 div.className = 'rec-item'; 
                 const ratingStr = p.rating ? `⭐ ${p.rating}` : '평점 없음'; 
                 div.innerHTML = `
-                    <div style="font-weight:bold; font-size:1.05em;">${p.displayName}</div>
+                    <div style="font-weight:bold; font-size:1.05em;">${escapeHTML(p.displayName)}</div>
                     <div style="color:#fcc419; font-size:0.9em; margin:2px 0;">${ratingStr}</div>
-                    <div style="color:#868e96; font-size:0.85em;">${p.formattedAddress}</div>
+                    <div style="color:#868e96; font-size:0.85em;">${escapeHTML(p.formattedAddress)}</div>
                 `;
                 div.onclick = () => { 
                     initiateAddPlace({ 
@@ -1351,7 +1809,16 @@ function renderDayTabs() {
         c.appendChild(b);
     });
 }
-function selectDay(idx) { currentDayIndex = idx; renderDayTabs(); renderTripInsights(); renderPlaceList(); renderMap(); }
+function selectDay(idx) { currentDayIndex = idx; updatePlannerSubtitle(); renderDayTabs(); renderTripInsights(); renderPlaceList(); renderMap(); }
+
+function updatePlannerSubtitle() {
+    const subtitle = document.getElementById('planner-subtitle');
+    if (!subtitle || !currentTripData) return;
+    const date = getTripDate(currentTripData.startDate, currentDayIndex);
+    const dateText = date ? `${date.getMonth() + 1}월 ${date.getDate()}일` : `${currentDayIndex + 1}일차`;
+    const destination = String(currentTripData.destination || '').split(' / ')[0];
+    subtitle.textContent = `${dateText} · ${destination}`;
+}
 
 async function renderMembers() {
     const list = document.getElementById('member-list');
@@ -1379,10 +1846,10 @@ async function renderMembers() {
             list.innerHTML += `
                 <div class="member-item" style="position:relative;">
                     <div style="position:relative; display:inline-block;">
-                        <img src="${user.photoURL}" class="member-avatar">
+                        <img src="${safeImageUrl(user.photoURL)}" class="member-avatar">
                         ${deleteBtn}
                     </div>
-                    <div class="member-name">${user.displayName}</div>
+                    <div class="member-name">${escapeHTML(user.displayName)}</div>
                 </div>`;
         });
     } catch(e) {
@@ -1396,7 +1863,8 @@ window.openEditPlaceModal = function(id) {
     if (!p) return; 
 
     document.getElementById('edit-place-name').value = p.name; 
-    document.getElementById('edit-place-time').value = p.time; 
+    document.getElementById('edit-place-time').value = p.time;
+    timePicker?.syncAll();
     document.getElementById('edit-place-memo').value = p.memo || ''; 
     
     // 기존 데이터에 expenseItems가 없으면(옛날 데이터) cost 기반으로 하나 만들어줌
@@ -1421,7 +1889,7 @@ window.openEditPlaceModal = function(id) {
 
     openModal('place-edit-modal'); 
 }
-function savePlaceDetails() { 
+function savePlaceDetails() {
     if (!currentEditPlaceId) return; 
     const p = currentTripData.days[currentDayIndex].places.find(p => p.id === currentEditPlaceId); 
     if (p) { 
@@ -1435,10 +1903,14 @@ function savePlaceDetails() {
         // 총 비용 업데이트 (지도나 리스트에 표시용)
         p.cost = tempExpenseBuffer.reduce((sum, item) => sum + item.price, 0);
 
-        saveTrip(); 
-        closeModal('place-edit-modal'); 
-        renderPlaceList(); // 리스트 갱신
-        renderBudget();    // 가계부 갱신
+        const day = currentTripData.days[currentDayIndex];
+        day.places = sortPlacesByTime(day.places);
+        saveTrip();
+        closeModal('place-edit-modal');
+        renderTripInsights();
+        renderPlaceList();
+        renderMap();
+        renderBudget();
     } 
 }
 
@@ -1504,7 +1976,7 @@ function renderBudget() {
 
         l.innerHTML += `
             <div class="settlement-card">
-                <span style="font-weight:600;"><i class="fas fa-user"></i> ${name}</span>
+                <span style="font-weight:600;"><i class="fas fa-user"></i> ${escapeHTML(name)}</span>
                 <span style="color:#339af0; font-weight:bold;">${Math.round(cost).toLocaleString()}원</span>
             </div>
         `;
@@ -1536,7 +2008,7 @@ function renderBudget() {
                         }).join(', ');
 
                         return `<div style="font-size:0.85em; color:#868e96; display:flex; justify-content:space-between;">
-                            <span>- ${item.name} (${memberNames})</span>
+                            <span>- ${escapeHTML(item.name)} (${escapeHTML(memberNames)})</span>
                             <span>${item.price.toLocaleString()}원</span>
                         </div>`;
                     }).join('');
@@ -1545,7 +2017,7 @@ function renderBudget() {
                 l.innerHTML += `
                     <div style="padding:12px 0; border-bottom:1px solid #eee;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                            <span style="font-weight:600;">${p.name}</span>
+                            <span style="font-weight:600;">${escapeHTML(p.name)}</span>
                             <span style="font-weight:700;">${displayCost.toLocaleString()}원</span>
                         </div>
                         ${detailsHtml}
@@ -1565,7 +2037,7 @@ async function fetchWeather(lat, lon, name) {
         const wData = await weatherRes.json(); 
         const current = wData.list[0]; 
         const iconUrl = `https://openweathermap.org/img/wn/${current.weather[0].icon}@2x.png`; 
-        widget.innerHTML = `<div class="weather-icon"><img src="${iconUrl}" alt="weather" style="width:50px;"></div><div class="weather-info"><div class="weather-main" style="font-weight:bold;">${name}</div><div class="weather-desc" style="font-size:0.9em;">${current.main.temp.toFixed(1)}°C, ${current.weather[0].description}</div></div>`; 
+        widget.innerHTML = `<div class="weather-icon"><img src="${safeImageUrl(iconUrl)}" alt="weather" style="width:50px;"></div><div class="weather-info"><div class="weather-main" style="font-weight:bold;">${escapeHTML(name)}</div><div class="weather-desc" style="font-size:0.9em;">${current.main.temp.toFixed(1)}°C, ${escapeHTML(current.weather[0].description)}</div></div>`;
     } catch (e) { console.warn(e); } 
 }
 
@@ -1635,7 +2107,7 @@ function renderChecklists() {
         div.className = 'checklist-card';
         div.innerHTML = `
             <div class="checklist-header">
-                <input type="text" class="checklist-title" value="${list.title}" onchange="updateChecklistTitle(${listIdx}, this.value)">
+                <input type="text" class="checklist-title" value="${escapeHTML(list.title)}" onchange="updateChecklistTitle(${listIdx}, this.value)">
                 <button class="btn-icon" style="color:#fa5252" onclick="deleteChecklist(${listIdx})"><i class="fas fa-trash-alt"></i></button>
             </div>
             <div id="cl-items-${listIdx}"></div>
@@ -1651,7 +2123,7 @@ function renderChecklists() {
             itemContainer.innerHTML += `
                 <div class="checklist-item ${item.checked ? 'checked' : ''}">
                     <input type="checkbox" class="checklist-checkbox" ${item.checked ? 'checked' : ''} onchange="toggleChecklistItem(${listIdx}, ${itemIdx})">
-                    <span style="flex:1;">${item.text}</span>
+                    <span style="flex:1;">${escapeHTML(item.text)}</span>
                     <i class="fas fa-times" style="cursor:pointer; color:#dee2e6;" onclick="deleteChecklistItem(${listIdx}, ${itemIdx})"></i>
                 </div>
             `;
@@ -1695,10 +2167,46 @@ async function copyInviteLink() {
     }
     showSuccess("초대 링크를 복사했습니다!");
 }
-function redirectToBooking() { const places = currentTripData.days[currentDayIndex].places; if (places.length === 0) return; const lastPlace = places[places.length - 1]; const query = encodeURIComponent(`${currentTripData.destination} ${lastPlace.name} ticket`); window.open(`https://www.google.com/search?q=${query}`, '_blank'); }
+function redirectToBooking() {
+    if (!currentRouteContext) return showError('먼저 일정 카드나 지도에서 확인할 이동 구간을 선택해주세요.');
+    const { origin, destination } = currentRouteContext;
+    const url = buildGoogleTransitUrl({ origin: origin.location, destination: destination.location });
+    if (!url) return showError('선택한 장소의 위치 정보를 확인해주세요.');
+    window.open(url, '_blank', 'noopener');
+}
 
-function openModal(id) { document.getElementById(id).classList.add('active'); }
-window.closeModal = (id) => document.getElementById(id).classList.remove('active');
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => modal.querySelector('button, input, select, [tabindex]:not([tabindex="-1"])')?.focus());
+}
+
+function closeModal(id, force = false) {
+    const modal = document.getElementById(id);
+    if (!modal || (modal.dataset.modalBlocking === 'true' && !force)) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    if (!document.querySelector('.modal.active')) document.body.classList.remove('modal-open');
+}
+window.closeModal = closeModal;
+
+function initModalControls() {
+    document.querySelectorAll('[data-close-modal]').forEach((button) => button.addEventListener('click', () => closeModal(button.dataset.closeModal)));
+    document.querySelectorAll('.modal:not(#date-picker-modal):not(#time-picker-modal)').forEach((modal) => modal.addEventListener('click', (event) => {
+        if (event.target === modal && modal.dataset.modalBlocking !== 'true') closeModal(modal.id);
+    }));
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const active = [...document.querySelectorAll('.modal.active')].at(-1);
+        if (!active || active.dataset.modalBlocking === 'true') return;
+        if (active.id === 'date-picker-modal') dateRangePicker?.close?.();
+        else if (active.id === 'time-picker-modal') timePicker?.close?.();
+        else closeModal(active.id);
+    });
+}
 function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 
 
@@ -1714,7 +2222,7 @@ function renderNewItemMemberSelect() {
         
         const chip = document.createElement('div');
         chip.className = 'member-select-chip selected'; 
-        chip.innerHTML = `${name}`; // 닉네임 표시
+        chip.textContent = name;
         chip.dataset.email = email;
         chip.onclick = () => chip.classList.toggle('selected');
         container.appendChild(chip);
@@ -1766,8 +2274,8 @@ function renderExpenseBuffer() {
         list.innerHTML += `
             <div class="expense-item-row">
                 <div>
-                    <div class="expense-info"><b>${item.name}</b> : ${item.price.toLocaleString()}원</div>
-                    <div class="expense-members"><i class="fas fa-user-friends"></i> ${memberNames}</div>
+                    <div class="expense-info"><b>${escapeHTML(item.name)}</b> : ${item.price.toLocaleString()}원</div>
+                    <div class="expense-members"><i class="fas fa-user-friends"></i> ${escapeHTML(memberNames)}</div>
                 </div>
                 <button class="btn-icon" style="color:#fa5252" onclick="removeExpenseItemFromBuffer(${idx})">
                     <i class="fas fa-times"></i>
