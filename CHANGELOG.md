@@ -18,7 +18,7 @@
 
 ### Operations
 
-- Enabled `maps-embed-backend.googleapis.com` for project `maps-481116`.
+- Enabled `maps-embed-backend.googleapis.com`.
 - Added Maps Embed API to the existing six-API allowlist while preserving the GitHub Pages and local HTTP referrer restrictions.
 
 ## 2.2.0 - 2026-07-28
@@ -49,7 +49,7 @@
 
 ### Operations
 
-- Enabled `routes.googleapis.com` for the Maps project `maps-481116` (project number `895769226148`) and verified permission errors no longer force all routing through deprecated Directions Service.
+- Enabled `routes.googleapis.com` and verified permission errors no longer force all routing through deprecated Directions Service.
 - Restricted the active Plany Maps key to the GitHub Pages origin and local port 5500, and to only Maps JavaScript, Places (New), Routes, Geocoding, and legacy Directions fallback APIs.
 
 ## 2.1.0 - 2026-07-28

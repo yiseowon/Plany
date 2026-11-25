@@ -53,6 +53,7 @@ import {
     sortPlacesByTime
 } from "./js/route-utils.js?v=2.3.0";
 
+const CONFIG = globalThis.PLANY_CONFIG;
 const app = initializeApp(CONFIG.FIREBASE);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -187,7 +188,7 @@ function showSuccess(msg) { showPopup("성공", msg, "fas fa-check-circle"); }
 function showError(msg) { showPopup("오류", msg, "fas fa-exclamation-circle"); }
 function showConfirm(msg, callback) { showPopup("확인", msg, "fas fa-question-circle", true, callback); }
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initializePlanner() {
     const versionEl = document.getElementById('app-version');
     if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
     
@@ -253,7 +254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             showScreen('login-screen');
         }
     });
-});
+}
 
 function setupResponsivePlanner() {
     const planner = document.getElementById('planner-screen');
@@ -615,7 +616,7 @@ function formatAuthError(error) {
     const host = window.location.hostname || '현재 도메인';
 
     if (code === 'auth/unauthorized-domain') {
-        return `Firebase 로그인 승인 도메인에 ${host}가 없습니다. Firebase Console > Authentication > Settings > Authorized domains에 plany.life, www.plany.life, yiseowon.github.io, localhost를 추가해 주세요.`;
+        return `Firebase 로그인 승인 도메인에 ${host}가 없습니다. Firebase Console > Authentication > Settings > Authorized domains에 현재 실행 중인 호스트를 등록해 주세요.`;
     }
     if (code === 'auth/operation-not-allowed') {
         return 'Firebase Authentication에서 Google 로그인 제공자가 꺼져 있습니다. Sign-in method에서 Google provider를 활성화해 주세요.';
@@ -2366,4 +2367,10 @@ window.openProfileEdit = function() {
     document.getElementById('profile-preview').src = myProfile.photoURL || 'https://via.placeholder.com/100';
     
     openModal('profile-modal');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializePlanner, { once: true });
+} else {
+    initializePlanner();
 }
