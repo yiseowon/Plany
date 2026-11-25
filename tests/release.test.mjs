@@ -74,6 +74,7 @@ test('does not ship private keys or repository access tokens', () => {
         for (const entry of readdirSync(directory)) {
             if (entry === '.git' || entry === 'node_modules') continue;
             const path = resolve(directory, entry);
+            if (path === resolve(root, 'config.local.js')) continue;
             if (statSync(path).isDirectory()) visit(path);
             else if (statSync(path).size < 1_000_000) files.push(path);
         }
@@ -83,7 +84,17 @@ test('does not ship private keys or repository access tokens', () => {
         '-----BEGIN ', '(?:RSA |EC |OPENSSH )?', 'PRIVATE KEY-----',
         '|gh', '[pousr]_[0-9A-Za-z]{20,}',
         '|AK', 'IA[0-9A-Z]{16}',
+        '|AI', 'za[0-9A-Za-z_-]{30,}',
+        '|OPENWEATHER_API_KEY', '\\s*:\\s*["\'][a-fA-F0-9]{25,}["\']',
     ].join(''));
     const findings = files.filter((path) => forbidden.test(readFileSync(path, 'utf8')));
     assert.deepEqual(findings, []);
+});
+
+test('keeps production settings out of a public checkout', () => {
+    assert.equal(existsSync(resolve(root, 'CNAME')), false, 'The retired custom domain must not be configured');
+    assert.equal(existsSync(resolve(root, 'config.js')), false, 'Production config must not be tracked');
+    assert.match(read('.gitignore'), /^\/config\.local\.js$/m);
+    assert.match(read('config.example.js'), /GOOGLE_API_KEY:\s*['"]{2}/);
+    assert.match(read('index.html'), /id="local-config-notice"/);
 });

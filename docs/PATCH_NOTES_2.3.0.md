@@ -19,7 +19,7 @@
 
 - Google 지도 화면을 긁거나 노선 정보를 별도로 저장하지 않습니다.
 - Google이 공식 지원하는 Maps Embed API와 Maps URL만 사용합니다.
-- `maps-481116` 프로젝트에서 Maps Embed API를 활성화했습니다.
+- Google Cloud에서 Maps Embed API를 활성화했습니다.
 - API 키는 Maps Embed API를 포함한 6개 API만 허용하며, 기존 GitHub Pages 및 로컬 웹사이트 출처 제한을 그대로 적용합니다.
 
 ## 업로드 상태

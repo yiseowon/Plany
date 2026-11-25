@@ -1,9 +1,10 @@
 # Plany 보안 및 공개 저장소 운영 기준
 
-Plany는 GitHub Pages에서 실행되는 정적 웹 앱입니다. 브라우저가 지도, Firebase, 날씨 API를 직접 호출하므로 클라이언트 키를 완전히 숨길 수는 없습니다. 공개 저장소에서는 키 자체를 비밀처럼 취급하는 것과 별개로, 각 제공자 콘솔에서 사용 범위를 강하게 제한해야 합니다.
+Plany는 정적 웹 앱이며 기존 공개 배포는 종료되었습니다. 로컬 실행 설정은 `config.local.js`에 저장합니다. 브라우저가 지도, Firebase, 날씨 API를 직접 호출하므로 배포 시 브라우저에 전달되는 키는 각 제공자 콘솔에서 사용 범위를 제한해야 합니다.
 
 ## GitHub에 올리면 안 되는 파일
 
+- `config.local.js`
 - `.env` 및 `.env.*`
 - Firebase 서비스 계정 JSON
 - 개인키, 인증서, 액세스 토큰
@@ -18,11 +19,7 @@ Plany는 GitHub Pages에서 실행되는 정적 웹 앱입니다. 브라우저�
 ### Google Maps Platform
 
 - 애플리케이션 제한을 HTTP 리퍼러로 설정합니다.
-- 허용 대상은 실제 서비스 주소와 로컬 개발 주소만 사용합니다.
-  - `https://plany.life/*`
-  - `https://www.plany.life/*`
-  - `https://yiseowon.github.io/Plany/*`
-  - 로컬 개발이 필요할 때만 `http://localhost:*/*`
+- HTTP 리퍼러 허용 목록에는 실제 실행 주소만 등록합니다.
 - API 제한을 켜고 Plany가 실제 사용하는 지도·장소 API만 허용합니다.
 - 일일 할당량과 예산 알림을 설정합니다.
 
@@ -46,7 +43,7 @@ Plany는 GitHub Pages에서 실행되는 정적 웹 앱입니다. 브라우저�
 3. 자동 테스트와 JavaScript 구문 검사를 통과시킵니다.
 4. 새 버전 브랜치와 태그만 먼저 push합니다.
 5. Draft Pull Request에서 변경 파일을 다시 검토합니다.
-6. 승인 후에만 `main`에 병합해 GitHub Pages에 반영합니다.
+6. 검토 후 `main`에 병합합니다.
 
 ## 사고 대응
 

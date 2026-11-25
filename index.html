@@ -27,6 +27,7 @@
                         <button id="google-login-btn" class="btn-google hero-start-btn"><i class="fab fa-google"></i> Google로 무료 시작</button>
                         <a href="#landing-guide" class="hero-link">먼저 둘러보기 <i class="fas fa-arrow-down"></i></a>
                     </div>
+                    <p id="local-config-notice" role="status" hidden>로컬에서 로그인과 지도 기능을 사용하려면 README의 실행 설정을 완료해 주세요.</p>
                     <div class="hero-trust"><span><i class="fas fa-shield-halved"></i> 비밀번호를 저장하지 않아요</span><span><i class="fas fa-user-group"></i> 초대 링크로 간편 협업</span></div>
                 </div>
                 <div class="hero-preview" aria-label="Plany 일정 화면 미리보기">
@@ -425,13 +426,27 @@
 
     <div id="app-version" class="app-version" aria-label="Plany 앱 버전"></div>
 
-    <script src="config.js"></script>
-    <script>
-        (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
-            key: CONFIG.GOOGLE_API_KEY,
-            v: "weekly",
-        });
+    <script type="module">
+        let config;
+        try {
+            ({ CONFIG: config } = await import('./config.local.js'));
+        } catch {
+            // A public checkout can display the landing page without local credentials.
+        }
+        const firebase = config?.FIREBASE;
+        if (firebase?.apiKey && firebase.authDomain && firebase.projectId && config.GOOGLE_API_KEY) {
+            globalThis.PLANY_CONFIG = config;
+            (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+                key: config.GOOGLE_API_KEY,
+                v: "weekly",
+            });
+            await import('./app.js?v=2.3.0');
+        } else {
+            document.getElementById('local-config-notice').hidden = false;
+            document.querySelectorAll('#google-login-btn, [data-start-plany], #open-privacy-settings').forEach((button) => {
+                button.disabled = true;
+            });
+        }
     </script>
-    <script type="module" src="app.js?v=2.3.0"></script>
 </body>
 </html>
